@@ -1,0 +1,12 @@
+packages:
+  "framer-motion": "For smooth mobile-like page transitions and micro-interactions"
+  "recharts": "For analytics and spending charts"
+  "uuid": "For generating unique transaction IDs locally"
+  "@types/uuid": "Types for uuid package"
+  "date-fns": "For formatting transaction dates nicely"
+
+images: []
+
+notes:
+  - All data is persisted to localStorage, no backend hooks required.
+  - Simulating a mobile app experience with a centered max-width container on desktop.
