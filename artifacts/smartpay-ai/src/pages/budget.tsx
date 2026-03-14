@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Download, ArrowLeftRight, CircleDollarSign } from 'lucide-react';
+import { Download, ArrowLeftRight, CircleDollarSign, FileDown } from 'lucide-react';
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  CartesianGrid, Legend,
 } from 'recharts';
 import BottomNav from '@/components/BottomNav';
 import {
@@ -18,12 +19,39 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
+const selectStyle: React.CSSProperties = {
+  background: 'hsl(222 40% 12%)',
+  border: '1px solid hsl(222 35% 22%)',
+  borderRadius: 10,
+  color: '#fff',
+  outline: 'none',
+  padding: '8px 10px',
+  fontSize: 13,
+};
+
+const cardStyle: React.CSSProperties = {
+  background: 'hsl(222 40% 12%)',
+  border: '1px solid hsl(222 35% 18%)',
+  borderRadius: 12,
+};
+
+const tooltipStyle = {
+  backgroundColor: 'hsl(222 40% 14%)',
+  border: '1px solid hsl(222 35% 22%)',
+  borderRadius: 10,
+  color: '#fff',
+  fontSize: 11,
+};
+
 export default function Budget() {
   const now = new Date();
+  const settings = getSettings();
+  const years = Array.from({ length: 5 }, (_, i) => now.getFullYear() - 2 + i);
+
+  // Budget tab state
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [tab, setTab] = useState<'budget' | 'compare'>('budget');
-  const settings = getSettings();
 
   const monthBudget = getMonthBudget(selectedMonth, selectedYear);
   const [totalBudget, setTotalBudget] = useState(monthBudget.totalBudget);
@@ -31,67 +59,135 @@ export default function Budget() {
     Object.fromEntries(monthBudget.categoryBudgets.map(c => [c.category, c.budget]))
   );
 
+  // Compare tab state — two independently selectable months
+  const prevM = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
+  const prevY = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+  const [cmpAMonth, setCmpAMonth] = useState(prevM);
+  const [cmpAYear, setCmpAYear] = useState(prevY);
+  const [cmpBMonth, setCmpBMonth] = useState(now.getMonth());
+  const [cmpBYear, setCmpBYear] = useState(now.getFullYear());
+
   const categorySpends = useMemo(() => {
     const txns = getTransactionsByMonth(selectedMonth, selectedYear);
     const data: Record<string, number> = {};
     settings.categories.forEach(c => (data[c] = 0));
-    txns.forEach(t => {
-      data[t.category] = (data[t.category] || 0) + t.amount;
-    });
+    txns.forEach(t => { data[t.category] = (data[t.category] || 0) + t.amount; });
     return data;
   }, [selectedMonth, selectedYear, settings.categories]);
 
-  const totalSpent = getSpendForMonth(selectedMonth, selectedYear);
-
-  const handleSave = () => {
+  const handleSave = useCallback(() => {
     saveMonthBudget(selectedMonth, selectedYear, {
       totalBudget,
-      categoryBudgets: settings.categories.map(c => ({
-        category: c,
-        budget: catBudgets[c] || 0,
-      })),
+      categoryBudgets: settings.categories.map(c => ({ category: c, budget: catBudgets[c] || 0 })),
     });
-  };
+  }, [selectedMonth, selectedYear, totalBudget, catBudgets, settings.categories]);
 
+  // Compare data: per-category for two selected months
   const compareData = useMemo(() => {
-    return Array.from({ length: 6 }, (_, i) => {
-      const d = new Date(selectedYear, selectedMonth - i, 1);
-      const m = d.getMonth();
-      const y = d.getFullYear();
-      const b = getMonthBudget(m, y);
-      const s = getSpendForMonth(m, y);
+    const aTxns = getTransactionsByMonth(cmpAMonth, cmpAYear);
+    const bTxns = getTransactionsByMonth(cmpBMonth, cmpBYear);
+    const aBudget = getMonthBudget(cmpAMonth, cmpAYear);
+    const bBudget = getMonthBudget(cmpBMonth, cmpBYear);
+
+    const aSpend: Record<string, number> = {};
+    const bSpend: Record<string, number> = {};
+    settings.categories.forEach(c => { aSpend[c] = 0; bSpend[c] = 0; });
+    aTxns.forEach(t => { aSpend[t.category] = (aSpend[t.category] || 0) + t.amount; });
+    bTxns.forEach(t => { bSpend[t.category] = (bSpend[t.category] || 0) + t.amount; });
+
+    return settings.categories.map(cat => {
+      const aCatBudget = aBudget.categoryBudgets.find(x => x.category === cat)?.budget ?? 0;
+      const bCatBudget = bBudget.categoryBudgets.find(x => x.category === cat)?.budget ?? 0;
       return {
-        name: MONTH_NAMES[m].slice(0, 3),
-        Budget: b.totalBudget,
-        Spent: s,
+        category: cat,
+        [`${MONTH_NAMES[cmpAMonth].slice(0, 3)} Spent`]: aSpend[cat],
+        [`${MONTH_NAMES[cmpBMonth].slice(0, 3)} Spent`]: bSpend[cat],
+        [`${MONTH_NAMES[cmpAMonth].slice(0, 3)} Budget`]: aCatBudget,
+        [`${MONTH_NAMES[cmpBMonth].slice(0, 3)} Budget`]: bCatBudget,
+        aSpent: aSpend[cat],
+        bSpent: bSpend[cat],
+        aBudget: aCatBudget,
+        bBudget: bCatBudget,
       };
-    }).reverse();
-  }, [selectedMonth, selectedYear]);
+    }).filter(d => d.aSpent > 0 || d.bSpent > 0);
+  }, [cmpAMonth, cmpAYear, cmpBMonth, cmpBYear, settings.categories]);
 
-  const years = Array.from({ length: 5 }, (_, i) => now.getFullYear() - 2 + i);
+  const aTotal = getSpendForMonth(cmpAMonth, cmpAYear);
+  const bTotal = getSpendForMonth(cmpBMonth, cmpBYear);
+  const aLabel = `${MONTH_NAMES[cmpAMonth].slice(0, 3)} '${String(cmpAYear).slice(2)}`;
+  const bLabel = `${MONTH_NAMES[cmpBMonth].slice(0, 3)} '${String(cmpBYear).slice(2)}`;
 
-  const cardStyle = {
-    background: 'hsl(222 40% 12%)',
-    border: '1px solid hsl(222 35% 18%)',
-    borderRadius: 12,
-  };
+  const handleDownloadPDF = () => {
+    const rows = compareData.map(d => `
+      <tr>
+        <td>${d.category}</td>
+        <td>₹${d.aBudget.toLocaleString('en-IN')}</td>
+        <td style="color:${d.aSpent > d.aBudget && d.aBudget > 0 ? '#ff4444' : '#00D65E'}">₹${d.aSpent.toLocaleString('en-IN')}</td>
+        <td>₹${d.bBudget.toLocaleString('en-IN')}</td>
+        <td style="color:${d.bSpent > d.bBudget && d.bBudget > 0 ? '#ff4444' : '#00D65E'}">₹${d.bSpent.toLocaleString('en-IN')}</td>
+        <td style="color:${d.bSpent > d.aSpent ? '#ff4444' : '#00D65E'}">${d.bSpent > d.aSpent ? '+' : ''}₹${(d.bSpent - d.aSpent).toLocaleString('en-IN')}</td>
+      </tr>`).join('');
 
-  const inputStyle = {
-    background: 'hsl(222 40% 16%)',
-    border: '1px solid hsl(222 35% 22%)',
-    borderRadius: 10,
-    color: '#fff',
-    padding: '10px 14px',
-    fontSize: 16,
-    width: '100%',
-    outline: 'none',
-  };
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8"/>
+  <title>SmartPay AI — Budget Comparison</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #fff; color: #111; padding: 32px; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .sub { color: #666; font-size: 13px; margin-bottom: 24px; }
+    .summary { display: flex; gap: 24px; margin-bottom: 28px; }
+    .summary-card { flex: 1; border: 1px solid #ddd; border-radius: 10px; padding: 16px; }
+    .summary-card h3 { font-size: 12px; color: #888; margin: 0 0 6px; text-transform: uppercase; }
+    .summary-card .val { font-size: 24px; font-weight: 700; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { background: #f4f4f4; text-align: left; padding: 10px 12px; font-size: 11px; text-transform: uppercase; color: #555; }
+    td { padding: 10px 12px; border-bottom: 1px solid #eee; }
+    tr:last-child td { border-bottom: none; }
+    .footer { margin-top: 32px; font-size: 11px; color: #aaa; text-align: center; }
+  </style>
+</head>
+<body>
+  <h1>SmartPay AI — Budget Comparison</h1>
+  <div class="sub">Generated on ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+  <div class="summary">
+    <div class="summary-card">
+      <h3>${aLabel} Total Spent</h3>
+      <div class="val">₹${aTotal.toLocaleString('en-IN')}</div>
+    </div>
+    <div class="summary-card">
+      <h3>${bLabel} Total Spent</h3>
+      <div class="val">₹${bTotal.toLocaleString('en-IN')}</div>
+    </div>
+    <div class="summary-card">
+      <h3>Difference</h3>
+      <div class="val" style="color:${bTotal > aTotal ? '#ff4444' : '#00aa44'}">${bTotal > aTotal ? '+' : ''}₹${(bTotal - aTotal).toLocaleString('en-IN')}</div>
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Category</th>
+        <th>${aLabel} Budget</th>
+        <th>${aLabel} Spent</th>
+        <th>${bLabel} Budget</th>
+        <th>${bLabel} Spent</th>
+        <th>Change</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="footer">SmartPay AI • Budget Report</div>
+</body>
+</html>`;
 
-  const tooltipStyle = {
-    backgroundColor: 'hsl(222 40% 12%)',
-    border: '1px solid hsl(222 35% 22%)',
-    borderRadius: 10,
-    color: '#fff',
+    const win = window.open('', '_blank');
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+      setTimeout(() => { win.focus(); win.print(); }, 400);
+    }
   };
 
   return (
@@ -102,139 +198,87 @@ export default function Budget() {
           <h1 className="text-2xl font-bold font-display text-foreground">Budget Planner</h1>
           <p className="text-xs text-muted-foreground mt-0.5">Plan &amp; compare your budgets</p>
         </div>
-        <button
-          onClick={handleSave}
-          className="p-2.5 rounded-xl"
-          style={{ background: 'hsl(222 40% 18%)' }}
-          title="Save budget"
-        >
-          <Download className="w-4 h-4 text-muted-foreground" />
-        </button>
+        {tab === 'budget' && (
+          <button onClick={handleSave} className="p-2.5 rounded-xl" style={{ background: 'hsl(222 40% 18%)' }} title="Save">
+            <Download className="w-4 h-4 text-muted-foreground" />
+          </button>
+        )}
+        {tab === 'compare' && (
+          <button onClick={handleDownloadPDF} className="p-2.5 rounded-xl flex items-center gap-1.5 text-xs font-semibold pr-3" style={{ background: 'rgba(0,214,94,0.12)', color: '#00D65E', border: '1px solid rgba(0,214,94,0.25)' }}>
+            <FileDown className="w-4 h-4" /> PDF
+          </button>
+        )}
       </div>
 
       <div className="px-4 space-y-4">
-        {/* Month / Year selectors */}
-        <div className="flex gap-3">
-          <select
-            value={selectedMonth}
-            onChange={e => {
-              const m = parseInt(e.target.value);
-              setSelectedMonth(m);
-              const b = getMonthBudget(m, selectedYear);
-              setTotalBudget(b.totalBudget);
-              setCatBudgets(Object.fromEntries(b.categoryBudgets.map(c => [c.category, c.budget])));
-            }}
-            className="flex-1 px-3 py-2.5 text-sm rounded-xl text-foreground"
-            style={{ background: 'hsl(222 40% 12%)', border: '1px solid hsl(222 35% 22%)', outline: 'none' }}
-          >
-            {MONTH_NAMES.map((m, i) => (
-              <option key={m} value={i}>{m}</option>
-            ))}
-          </select>
-          <select
-            value={selectedYear}
-            onChange={e => {
-              const y = parseInt(e.target.value);
-              setSelectedYear(y);
-              const b = getMonthBudget(selectedMonth, y);
-              setTotalBudget(b.totalBudget);
-              setCatBudgets(Object.fromEntries(b.categoryBudgets.map(c => [c.category, c.budget])));
-            }}
-            className="px-3 py-2.5 text-sm rounded-xl text-foreground"
-            style={{ background: 'hsl(222 40% 12%)', border: '1px solid hsl(222 35% 22%)', outline: 'none' }}
-          >
-            {years.map(y => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
-        </div>
-
         {/* Tab toggle */}
-        <div
-          className="flex rounded-xl overflow-hidden"
-          style={{ background: 'hsl(222 40% 12%)', border: '1px solid hsl(222 35% 18%)' }}
-        >
-          <button
-            onClick={() => setTab('budget')}
-            className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold transition-all rounded-xl"
-            style={
-              tab === 'budget'
-                ? { background: '#00D65E', color: '#000' }
-                : { color: 'hsl(215 20% 55%)' }
-            }
-          >
-            <CircleDollarSign className="w-4 h-4" />
-            Budget
-          </button>
-          <button
-            onClick={() => setTab('compare')}
-            className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold transition-all rounded-xl"
-            style={
-              tab === 'compare'
-                ? { background: '#00D65E', color: '#000' }
-                : { color: 'hsl(215 20% 55%)' }
-            }
-          >
-            <ArrowLeftRight className="w-4 h-4" />
-            Compare
-          </button>
+        <div className="flex rounded-xl overflow-hidden" style={{ background: 'hsl(222 40% 12%)', border: '1px solid hsl(222 35% 18%)' }}>
+          {(['budget', 'compare'] as const).map(t => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold transition-all rounded-xl capitalize"
+              style={tab === t ? { background: '#00D65E', color: '#000' } : { color: 'hsl(215 20% 55%)' }}
+            >
+              {t === 'budget' ? <CircleDollarSign className="w-4 h-4" /> : <ArrowLeftRight className="w-4 h-4" />}
+              {t === 'budget' ? 'Budget' : 'Compare'}
+            </button>
+          ))}
         </div>
 
         {tab === 'budget' ? (
           <>
-            {/* Total Budget */}
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              style={cardStyle}
-              className="p-4"
-            >
+            {/* Month/Year selectors for budget tab */}
+            <div className="flex gap-3">
+              <select value={selectedMonth} onChange={e => { const m = parseInt(e.target.value); setSelectedMonth(m); const b = getMonthBudget(m, selectedYear); setTotalBudget(b.totalBudget); setCatBudgets(Object.fromEntries(b.categoryBudgets.map(c => [c.category, c.budget]))); }} className="flex-1" style={selectStyle}>
+                {MONTH_NAMES.map((m, i) => <option key={m} value={i}>{m}</option>)}
+              </select>
+              <select value={selectedYear} onChange={e => { const y = parseInt(e.target.value); setSelectedYear(y); const b = getMonthBudget(selectedMonth, y); setTotalBudget(b.totalBudget); setCatBudgets(Object.fromEntries(b.categoryBudgets.map(c => [c.category, c.budget]))); }} style={selectStyle}>
+                {years.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+
+            {/* Total budget input */}
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} style={cardStyle} className="p-4">
               <p className="text-xs text-muted-foreground mb-2">Total Monthly Budget</p>
               <div className="flex items-center gap-2">
                 <span className="text-muted-foreground text-lg">₹</span>
-                <input
-                  type="number"
-                  value={totalBudget}
-                  onChange={e => setTotalBudget(Number(e.target.value))}
-                  onBlur={handleSave}
-                  style={{ ...inputStyle, background: 'transparent', border: 'none', padding: '0', fontSize: 20, fontWeight: 700 }}
-                />
+                <input type="number" value={totalBudget} onChange={e => setTotalBudget(Number(e.target.value))} onBlur={handleSave}
+                  className="bg-transparent border-none outline-none text-xl font-bold text-foreground w-full"
+                  style={{ fontFamily: 'var(--font-display)' }} />
               </div>
             </motion.div>
 
-            {/* Category Allocation */}
+            {/* Category allocation */}
             <div>
               <h3 className="text-sm font-semibold text-foreground mb-3">Category Allocation</h3>
               <div className="space-y-3">
                 {settings.categories.map((cat, i) => {
                   const spent = categorySpends[cat] || 0;
+                  const budgeted = catBudgets[cat] || 0;
+                  const over = budgeted > 0 && spent > budgeted;
                   return (
-                    <motion.div
-                      key={cat}
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.04 }}
-                      style={cardStyle}
-                      className="p-4"
-                    >
+                    <motion.div key={cat} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }} style={cardStyle} className="p-4">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-sm font-semibold text-foreground">{cat}</span>
-                        <span className="text-xs text-muted-foreground">
+                        <span className="text-xs font-semibold" style={{ color: over ? '#FF4444' : 'hsl(215 20% 55%)' }}>
                           Spent ₹{spent.toLocaleString('en-IN')}
+                          {over && ' ⚠️'}
                         </span>
                       </div>
+                      {budgeted > 0 && (
+                        <div className="h-1.5 rounded-full mb-2 overflow-hidden" style={{ background: 'hsl(222 35% 20%)' }}>
+                          <div className="h-full rounded-full transition-all" style={{ width: `${Math.min((spent / budgeted) * 100, 100)}%`, background: over ? '#FF4444' : '#00D65E' }} />
+                        </div>
+                      )}
                       <div className="flex items-center gap-2">
                         <span className="text-muted-foreground text-sm">₹</span>
-                        <input
-                          type="number"
-                          value={catBudgets[cat] || 0}
-                          onChange={e => {
-                            setCatBudgets(prev => ({ ...prev, [cat]: Number(e.target.value) }));
-                          }}
+                        <input type="number" value={catBudgets[cat] || 0}
+                          onChange={e => setCatBudgets(prev => ({ ...prev, [cat]: Number(e.target.value) }))}
                           onBlur={handleSave}
-                          style={inputStyle}
-                          placeholder="0"
-                        />
+                          className="outline-none text-sm text-foreground w-full rounded-lg px-3 py-2"
+                          style={{ background: 'hsl(222 40% 16%)', border: '1px solid hsl(222 35% 22%)' }}
+                          placeholder="0" />
                       </div>
                     </motion.div>
                   );
@@ -243,51 +287,104 @@ export default function Budget() {
             </div>
           </>
         ) : (
-          /* Compare tab */
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            style={cardStyle}
-            className="p-4"
-          >
-            <h3 className="text-sm font-semibold text-foreground mb-4">
-              6-Month Comparison
-            </h3>
-            <div className="h-56">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={compareData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(222 35% 20%)" vertical={false} />
-                  <XAxis
-                    dataKey="name"
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fontSize: 10, fill: 'hsl(215 20% 55%)' }}
-                  />
-                  <YAxis
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fontSize: 9, fill: 'hsl(215 20% 55%)' }}
-                  />
-                  <Tooltip
-                    formatter={(v: number) => `₹${v.toLocaleString('en-IN')}`}
-                    contentStyle={tooltipStyle}
-                  />
-                  <Bar dataKey="Budget" fill="#00D65E" radius={[4, 4, 0, 0]} opacity={0.7} />
-                  <Bar dataKey="Spent" fill="#00BFDB" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="flex gap-4 justify-center mt-3">
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <div className="w-3 h-3 rounded-sm opacity-70" style={{ background: '#00D65E' }} />
-                Budget
+          /* ── COMPARE TAB ── */
+          <>
+            {/* Month A & B selectors */}
+            <div className="grid grid-cols-2 gap-3">
+              {/* Month A */}
+              <div style={cardStyle} className="p-3">
+                <p className="text-[10px] text-muted-foreground mb-2 uppercase tracking-wider font-semibold" style={{ color: '#00D65E' }}>Month A</p>
+                <select value={cmpAMonth} onChange={e => setCmpAMonth(parseInt(e.target.value))} className="w-full mb-2" style={selectStyle}>
+                  {MONTH_NAMES.map((m, i) => <option key={m} value={i}>{m.slice(0, 3)}</option>)}
+                </select>
+                <select value={cmpAYear} onChange={e => setCmpAYear(parseInt(e.target.value))} className="w-full" style={selectStyle}>
+                  {years.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
               </div>
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <div className="w-3 h-3 rounded-sm" style={{ background: '#00BFDB' }} />
-                Spent
+              {/* Month B */}
+              <div style={cardStyle} className="p-3">
+                <p className="text-[10px] text-muted-foreground mb-2 uppercase tracking-wider font-semibold" style={{ color: '#00BFDB' }}>Month B</p>
+                <select value={cmpBMonth} onChange={e => setCmpBMonth(parseInt(e.target.value))} className="w-full mb-2" style={selectStyle}>
+                  {MONTH_NAMES.map((m, i) => <option key={m} value={i}>{m.slice(0, 3)}</option>)}
+                </select>
+                <select value={cmpBYear} onChange={e => setCmpBYear(parseInt(e.target.value))} className="w-full" style={selectStyle}>
+                  {years.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
               </div>
             </div>
-          </motion.div>
+
+            {/* Total summary */}
+            <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="grid grid-cols-3 gap-2">
+              {[
+                { label: aLabel, val: aTotal, color: '#00D65E' },
+                { label: bLabel, val: bTotal, color: '#00BFDB' },
+                { label: 'Difference', val: bTotal - aTotal, color: bTotal > aTotal ? '#FF4444' : '#00D65E', prefix: bTotal > aTotal ? '+' : '' },
+              ].map(({ label, val, color, prefix = '' }) => (
+                <div key={label} style={cardStyle} className="p-3 text-center">
+                  <p className="text-[10px] text-muted-foreground mb-1">{label}</p>
+                  <p className="text-sm font-bold" style={{ color }}>
+                    {prefix}₹{Math.abs(val).toLocaleString('en-IN')}
+                  </p>
+                </div>
+              ))}
+            </motion.div>
+
+            {/* Category-wise bar chart */}
+            {compareData.length === 0 ? (
+              <div style={cardStyle} className="p-6 text-center text-sm text-muted-foreground">No transactions found for selected months.</div>
+            ) : (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} style={cardStyle} className="p-4">
+                <p className="text-sm font-semibold text-foreground mb-4">Spend by Category</p>
+                <div className="h-56">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={compareData} margin={{ top: 4, right: 4, left: -22, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(222 35% 20%)" vertical={false} />
+                      <XAxis dataKey="category" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'hsl(215 20% 55%)' }} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'hsl(215 20% 55%)' }} />
+                      <Tooltip formatter={(v: number) => `₹${v.toLocaleString('en-IN')}`} contentStyle={tooltipStyle} />
+                      <Bar dataKey="aSpent" name={aLabel} fill="#00D65E" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="bSpent" name={bLabel} fill="#00BFDB" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="flex gap-4 justify-center mt-2">
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><div className="w-3 h-2.5 rounded-sm" style={{ background: '#00D65E' }} />{aLabel}</div>
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><div className="w-3 h-2.5 rounded-sm" style={{ background: '#00BFDB' }} />{bLabel}</div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Category detail table */}
+            {compareData.length > 0 && (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} style={cardStyle} className="p-4 overflow-x-auto">
+                <p className="text-sm font-semibold text-foreground mb-3">Category Breakdown</p>
+                <table className="w-full text-xs" style={{ borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      {['Category', aLabel + ' Spent', bLabel + ' Spent', 'Change'].map(h => (
+                        <th key={h} className="text-left pb-2 font-semibold" style={{ color: 'hsl(215 20% 50%)', paddingRight: 8 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {compareData.map(d => {
+                      const diff = d.bSpent - d.aSpent;
+                      return (
+                        <tr key={d.category} style={{ borderTop: '1px solid hsl(222 35% 18%)' }}>
+                          <td className="py-2.5 font-semibold text-foreground" style={{ paddingRight: 8 }}>{d.category}</td>
+                          <td className="py-2.5" style={{ color: '#00D65E', paddingRight: 8 }}>₹{d.aSpent.toLocaleString('en-IN')}</td>
+                          <td className="py-2.5" style={{ color: '#00BFDB', paddingRight: 8 }}>₹{d.bSpent.toLocaleString('en-IN')}</td>
+                          <td className="py-2.5 font-bold" style={{ color: diff > 0 ? '#FF4444' : '#00D65E' }}>
+                            {diff > 0 ? '+' : ''}₹{Math.abs(diff).toLocaleString('en-IN')}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </motion.div>
+            )}
+          </>
         )}
       </div>
 
