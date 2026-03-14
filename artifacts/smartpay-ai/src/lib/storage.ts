@@ -1,9 +1,13 @@
 import { v4 as uuidv4 } from 'uuid';
 
+export type PayApp = 'gpay' | 'phonepe' | 'paytm' | 'upi';
+
 export interface Settings {
   monthlyBudget: number;
   categories: string[];
   onboarded: boolean;
+  preferredPayApp: PayApp | '';
+  payAppName: string;
 }
 
 export interface Transaction {
@@ -30,7 +34,22 @@ const DEFAULT_SETTINGS: Settings = {
   monthlyBudget: 50000,
   categories: DEFAULT_CATEGORIES,
   onboarded: false,
+  preferredPayApp: '',
+  payAppName: '',
 };
+
+export function buildUpiLink(app: PayApp | '', pa: string, amount: number, pn = 'Merchant', tn = ''): string {
+  const schemes: Record<string, string> = {
+    gpay: 'gpay://upi/pay',
+    phonepe: 'phonepe://pay',
+    paytm: 'paytmmp://pay',
+    upi: 'upi://pay',
+  };
+  const base = schemes[app || 'upi'] || 'upi://pay';
+  const p = new URLSearchParams({ pa, pn, am: amount.toFixed(2), cu: 'INR' });
+  if (tn) p.set('tn', tn);
+  return `${base}?${p.toString()}`;
+}
 
 export function getSettings(): Settings {
   try {

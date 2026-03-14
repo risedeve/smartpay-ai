@@ -1,14 +1,17 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Save, AlertTriangle, ShieldCheck, ChevronRight } from 'lucide-react';
+import { Save, AlertTriangle, ShieldCheck, ChevronRight, Smartphone } from 'lucide-react';
 import BottomNav from '@/components/BottomNav';
 import { getSettings, saveSettings, clearAllData } from '@/lib/storage';
 import { useToast } from '@/hooks/use-toast';
+import PayAppSetupModal from '@/components/PayAppSetupModal';
 
 export default function SettingsPage() {
   const { toast } = useToast();
   const currentSettings = getSettings();
   const [budget, setBudget] = useState(currentSettings.monthlyBudget.toString());
+  const [showAppSetup, setShowAppSetup] = useState(false);
+  const [currentApp, setCurrentApp] = useState(currentSettings.payAppName || '');
   
   const handleSaveBudget = () => {
     const num = Number(budget);
@@ -59,6 +62,34 @@ export default function SettingsPage() {
               </button>
             </div>
             <p className="text-xs text-muted-foreground mt-3">SmartPay AI uses this to calculate your daily spending limits and generate tips.</p>
+          </div>
+        </motion.section>
+
+        {/* Payment App */}
+        <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
+          <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3 ml-1">Payment App</h3>
+          <div className="glass rounded-2xl p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="p-2 rounded-lg" style={{ background: 'rgba(0,214,94,0.12)' }}>
+                <Smartphone className="w-5 h-5" style={{ color: '#00D65E' }} />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-bold text-foreground">Default UPI App</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {currentApp ? currentApp : 'Not selected yet'}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowAppSetup(true)}
+                className="text-xs font-bold px-3 py-1.5 rounded-lg transition-all"
+                style={{ background: 'rgba(0,214,94,0.12)', color: '#00D65E', border: '1px solid rgba(0,214,94,0.25)' }}
+              >
+                {currentApp ? 'Change' : 'Select'}
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              When you tap Pay, SmartPay AI will open your chosen UPI app with amount pre-filled automatically.
+            </p>
           </div>
         </motion.section>
 
@@ -114,6 +145,14 @@ export default function SettingsPage() {
       </div>
 
       <BottomNav />
+
+      <PayAppSetupModal
+        open={showAppSetup}
+        onDone={() => {
+          setShowAppSetup(false);
+          setCurrentApp(getSettings().payAppName || '');
+        }}
+      />
     </div>
   );
 }
