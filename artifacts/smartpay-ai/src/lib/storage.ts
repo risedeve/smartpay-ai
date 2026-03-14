@@ -14,10 +14,20 @@ export interface Transaction {
   date: string;
 }
 
-const DEFAULT_CATEGORIES = ['Food', 'Transport', 'Shopping', 'Entertainment', 'Health', 'Bills', 'Others'];
+export interface CategoryBudget {
+  category: string;
+  budget: number;
+}
+
+export interface MonthBudget {
+  totalBudget: number;
+  categoryBudgets: CategoryBudget[];
+}
+
+const DEFAULT_CATEGORIES = ['Food', 'Travel', 'Shopping', 'Bills', 'Entertainment', 'Health', 'Others'];
 
 const DEFAULT_SETTINGS: Settings = {
-  monthlyBudget: 10000,
+  monthlyBudget: 50000,
   categories: DEFAULT_CATEGORIES,
   onboarded: false,
 };
@@ -29,7 +39,7 @@ export function getSettings(): Settings {
       return { ...DEFAULT_SETTINGS, ...JSON.parse(data) };
     }
   } catch (e) {
-    console.error("Error reading settings", e);
+    console.error('Error reading settings', e);
   }
   return DEFAULT_SETTINGS;
 }
@@ -48,28 +58,34 @@ export function getAllTransactions(): Transaction[] {
       return JSON.parse(data);
     }
   } catch (e) {
-    console.error("Error reading transactions", e);
+    console.error('Error reading transactions', e);
   }
   return [];
 }
 
-export function getMonthTransactions(): Transaction[] {
+export function getTransactionsByMonth(month: number, year: number): Transaction[] {
   const all = getAllTransactions();
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).getTime();
-
+  const start = new Date(year, month, 1).getTime();
+  const end = new Date(year, month + 1, 0, 23, 59, 59, 999).getTime();
   return all
     .filter(t => {
       const time = new Date(t.date).getTime();
-      return time >= startOfMonth && time <= endOfMonth;
+      return time >= start && time <= end;
     })
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
 
+export function getMonthTransactions(): Transaction[] {
+  const now = new Date();
+  return getTransactionsByMonth(now.getMonth(), now.getFullYear());
+}
+
 export function getMonthlySpend(): number {
-  const txs = getMonthTransactions();
-  return txs.reduce((sum, t) => sum + t.amount, 0);
+  return getMonthTransactions().reduce((sum, t) => sum + t.amount, 0);
+}
+
+export function getSpendForMonth(month: number, year: number): number {
+  return getTransactionsByMonth(month, year).reduce((sum, t) => sum + t.amount, 0);
 }
 
 export function addTransaction(data: Omit<Transaction, 'id' | 'date'>) {
@@ -93,4 +109,25 @@ export function deleteTransaction(id: string) {
 export function clearAllData() {
   localStorage.removeItem('smartpay_settings');
   localStorage.removeItem('smartpay_transactions');
+  localStorage.removeItem('smartpay_budgets');
+}
+
+export function getMonthBudget(month: number, year: number): MonthBudget {
+  try {
+    const key = `smartpay_budget_${year}_${month}`;
+    const data = localStorage.getItem(key);
+    if (data) return JSON.parse(data);
+  } catch (e) {
+    console.error('Error reading budget', e);
+  }
+  const settings = getSettings();
+  return {
+    totalBudget: settings.monthlyBudget,
+    categoryBudgets: settings.categories.map(c => ({ category: c, budget: 0 })),
+  };
+}
+
+export function saveMonthBudget(month: number, year: number, budget: MonthBudget) {
+  const key = `smartpay_budget_${year}_${month}`;
+  localStorage.setItem(key, JSON.stringify(budget));
 }

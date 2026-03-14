@@ -1,5 +1,4 @@
 import { motion } from 'framer-motion';
-import { Zap } from 'lucide-react';
 
 interface PayButtonProps {
   onClick: () => void;
@@ -7,19 +6,38 @@ interface PayButtonProps {
 
 export default function PayButton({ onClick }: PayButtonProps) {
   return (
-    <div className="relative">
-      {/* Pulsing background rings */}
-      <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping" style={{ animationDuration: '3s' }} />
-      <div className="absolute inset-[-10px] rounded-full bg-primary/10 animate-ping" style={{ animationDuration: '3s', animationDelay: '0.5s' }} />
-      
+    <div className="relative flex items-center justify-center">
+      <div
+        className="absolute rounded-full animate-ping"
+        style={{
+          width: 120,
+          height: 120,
+          background: 'radial-gradient(circle, rgba(0,214,94,0.25) 0%, transparent 70%)',
+          animationDuration: '2.5s',
+        }}
+      />
+      <div
+        className="absolute rounded-full animate-ping"
+        style={{
+          width: 140,
+          height: 140,
+          background: 'radial-gradient(circle, rgba(0,214,94,0.12) 0%, transparent 70%)',
+          animationDuration: '2.5s',
+          animationDelay: '0.4s',
+        }}
+      />
       <motion.button
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
+        whileHover={{ scale: 1.06 }}
+        whileTap={{ scale: 0.93 }}
         onClick={onClick}
-        className="relative z-10 w-24 h-24 rounded-full bg-gradient-to-b from-primary to-primary/80 flex flex-col items-center justify-center text-white shadow-[0_0_30px_rgba(108,99,255,0.4)] border border-white/20"
+        className="relative z-10 w-28 h-28 rounded-full flex flex-col items-center justify-center text-black font-bold shadow-lg"
+        style={{
+          background: 'radial-gradient(circle at 40% 35%, #4DFFA0, #00D65E 60%, #00A847)',
+          boxShadow: '0 0 40px rgba(0,214,94,0.45), 0 0 80px rgba(0,214,94,0.2)',
+        }}
       >
-        <Zap className="w-8 h-8 mb-1" fill="currentColor" />
-        <span className="font-bold text-lg font-display tracking-wide">PAY</span>
+        <span className="text-2xl font-black font-display tracking-widest" style={{ color: '#000' }}>PAY</span>
+        <span className="text-[10px] font-semibold mt-0.5 opacity-70" style={{ color: '#000' }}>Tap to pay</span>
       </motion.button>
     </div>
   );
