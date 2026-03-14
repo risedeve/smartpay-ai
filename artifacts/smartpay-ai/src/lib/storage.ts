@@ -131,3 +131,32 @@ export function saveMonthBudget(month: number, year: number, budget: MonthBudget
   const key = `smartpay_budget_${year}_${month}`;
   localStorage.setItem(key, JSON.stringify(budget));
 }
+
+export type BudgetAlertKind = 'none' | 'over_budget' | 'no_budget';
+
+export interface BudgetAlertInfo {
+  kind: BudgetAlertKind;
+  category: string;
+  spent: number;
+  budget: number;
+}
+
+export function checkBudgetAlert(category: string): BudgetAlertInfo {
+  const now = new Date();
+  const monthBudget = getMonthBudget(now.getMonth(), now.getFullYear());
+  const catEntry = monthBudget.categoryBudgets.find(c => c.category === category);
+  const catBudgetAmount = catEntry?.budget ?? 0;
+
+  const txns = getTransactionsByMonth(now.getMonth(), now.getFullYear());
+  const catSpent = txns
+    .filter(t => t.category === category)
+    .reduce((s, t) => s + t.amount, 0);
+
+  if (catBudgetAmount === 0) {
+    return { kind: 'no_budget', category, spent: catSpent, budget: 0 };
+  }
+  if (catSpent > catBudgetAmount) {
+    return { kind: 'over_budget', category, spent: catSpent, budget: catBudgetAmount };
+  }
+  return { kind: 'none', category, spent: catSpent, budget: catBudgetAmount };
+}
