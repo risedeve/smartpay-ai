@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   addTransaction, getSettings, checkBudgetAlert,
-  BudgetAlertInfo, buildUpiLink,
+  BudgetAlertInfo, buildAppOpenLink,
 } from '@/lib/storage';
 import BottomSheet from './BottomSheet';
 import BudgetAlertModal from './BudgetAlertModal';
@@ -22,8 +22,6 @@ const APP_COLORS: Record<string, string> = {
 
 export default function PaymentModal({ open, onClose, onSuccess }: PaymentModalProps) {
   const [amount, setAmount] = useState('');
-  const [payeeUpi, setPayeeUpi] = useState('');
-  const [payeeName, setPayeeName] = useState('');
   const [category, setCategory] = useState('');
   const [note, setNote] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -33,38 +31,33 @@ export default function PaymentModal({ open, onClose, onSuccess }: PaymentModalP
   const settings = getSettings();
   const cat = category || settings.categories[0] || 'Others';
   const appColor = APP_COLORS[settings.preferredPayApp] || '#00D65E';
+  const appName = settings.payAppName || 'UPI App';
 
-  // If no preferred app set, show setup first
   const handlePayPress = () => {
     if (!settings.preferredPayApp) {
       setShowAppSetup(true);
       return;
     }
-    submitPayment();
-  };
-
-  const submitPayment = () => {
     if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) return;
-    if (!payeeUpi.trim()) return;
 
     setIsSubmitting(true);
 
-    // Record in SmartPay AI
-    addTransaction({ amount: Number(amount), category: cat, note: note || `Paid to ${payeeName || payeeUpi}` });
+    // Record transaction in SmartPay AI
+    addTransaction({ amount: Number(amount), category: cat, note: note || `${cat} payment` });
 
-    // Open UPI app
-    const link = buildUpiLink(settings.preferredPayApp, payeeUpi.trim(), Number(amount), payeeName || 'Merchant', note);
-    window.location.href = link;
+    // Open the payment app directly
+    window.location.href = buildAppOpenLink(settings.preferredPayApp);
 
     setTimeout(() => {
       const info = checkBudgetAlert(cat);
       setIsSubmitting(false);
-      // Reset fields
-      setAmount(''); setPayeeUpi(''); setPayeeName(''); setNote('');
+      setAmount('');
+      setNote('');
+      setCategory('');
       onSuccess();
       onClose();
       if (info.kind !== 'none') setAlert(info);
-    }, 800);
+    }, 600);
   };
 
   const inputStyle: React.CSSProperties = {
@@ -72,21 +65,20 @@ export default function PaymentModal({ open, onClose, onSuccess }: PaymentModalP
     border: '1px solid hsl(222 35% 22%)',
   };
 
-  const refreshedSettings = getSettings();
-  const appName = refreshedSettings.payAppName || 'UPI App';
-
   return (
     <>
       <BottomSheet isOpen={open} onClose={onClose} title="New Payment">
         <div className="flex flex-col gap-4">
 
-          {/* Preferred app badge */}
+          {/* App badge */}
           <div className="flex items-center justify-between">
-            {refreshedSettings.preferredPayApp ? (
-              <div className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-full font-semibold"
-                style={{ background: `${appColor}15`, color: appColor, border: `1px solid ${appColor}30` }}>
-                <span className="w-2 h-2 rounded-full inline-block" style={{ background: appColor }} />
-                Paying via {appName}
+            {settings.preferredPayApp ? (
+              <div
+                className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-full font-semibold"
+                style={{ background: `${appColor}15`, color: appColor, border: `1px solid ${appColor}30` }}
+              >
+                <span className="w-2 h-2 rounded-full" style={{ background: appColor }} />
+                Opens {appName}
               </div>
             ) : (
               <div className="text-xs text-muted-foreground">No payment app selected</div>
@@ -95,13 +87,13 @@ export default function PaymentModal({ open, onClose, onSuccess }: PaymentModalP
               onClick={() => setShowAppSetup(true)}
               className="text-xs underline underline-offset-2 text-muted-foreground"
             >
-              {refreshedSettings.preferredPayApp ? 'Change' : 'Select App'}
+              {settings.preferredPayApp ? 'Change' : 'Select App'}
             </button>
           </div>
 
           {/* Amount */}
-          <div className="flex flex-col items-center justify-center py-5 rounded-2xl" style={inputStyle}>
-            <span className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Amount</span>
+          <div className="flex flex-col items-center justify-center py-6 rounded-2xl" style={inputStyle}>
+            <span className="text-[10px] text-muted-foreground uppercase tracking-widest mb-2">Amount</span>
             <div className="flex items-center text-5xl font-display font-bold text-foreground">
               <span className="text-3xl text-muted-foreground mr-1">₹</span>
               <input
@@ -115,36 +107,8 @@ export default function PaymentModal({ open, onClose, onSuccess }: PaymentModalP
             </div>
           </div>
 
-          {/* Payee UPI ID */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              Pay to (UPI ID) <span style={{ color: '#FF4444' }}>*</span>
-            </label>
-            <input
-              type="text"
-              value={payeeUpi}
-              onChange={e => setPayeeUpi(e.target.value)}
-              placeholder="example@oksbi / merchant@ybl"
-              className="w-full px-4 py-3 text-sm text-foreground rounded-xl outline-none"
-              style={inputStyle}
-            />
-          </div>
-
-          {/* Payee Name (optional) */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Payee Name (optional)</label>
-            <input
-              type="text"
-              value={payeeName}
-              onChange={e => setPayeeName(e.target.value)}
-              placeholder="e.g. Raj's Cafe"
-              className="w-full px-4 py-3 text-sm text-foreground rounded-xl outline-none"
-              style={inputStyle}
-            />
-          </div>
-
           {/* Category */}
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Category</label>
             <div className="grid grid-cols-4 gap-1.5">
               {settings.categories.map(c => (
@@ -152,7 +116,7 @@ export default function PaymentModal({ open, onClose, onSuccess }: PaymentModalP
                   key={c}
                   type="button"
                   onClick={() => setCategory(c)}
-                  className="py-1.5 px-2 rounded-lg text-[11px] font-semibold transition-all active:scale-95"
+                  className="py-2 px-1 rounded-lg text-[11px] font-semibold transition-all active:scale-95"
                   style={
                     cat === c
                       ? { background: '#00D65E', color: '#000' }
@@ -166,7 +130,7 @@ export default function PaymentModal({ open, onClose, onSuccess }: PaymentModalP
           </div>
 
           {/* Note */}
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Note (optional)</label>
             <input
               type="text"
@@ -181,19 +145,18 @@ export default function PaymentModal({ open, onClose, onSuccess }: PaymentModalP
           {/* Pay button */}
           <button
             onClick={handlePayPress}
-            disabled={!amount || !payeeUpi.trim() || isSubmitting}
-            className="mt-1 w-full py-4 rounded-xl text-black font-bold text-base transition-all active:scale-[0.98] disabled:opacity-40 flex items-center justify-center gap-2"
-            style={{ background: isSubmitting ? 'hsl(222 35% 22%)' : '#00D65E', color: isSubmitting ? '#666' : '#000' }}
+            disabled={!amount || isSubmitting}
+            className="mt-1 w-full py-4 rounded-xl font-bold text-base transition-all active:scale-[0.98] disabled:opacity-40"
+            style={{
+              background: isSubmitting ? 'hsl(222 35% 22%)' : '#00D65E',
+              color: isSubmitting ? '#666' : '#000',
+            }}
           >
-            {isSubmitting ? 'Opening...' : (
-              <>
-                Pay ₹{Number(amount || 0).toLocaleString('en-IN')} via {appName}
-              </>
-            )}
+            {isSubmitting ? 'Opening...' : `Pay ₹${Number(amount || 0).toLocaleString('en-IN')} via ${appName}`}
           </button>
 
           <p className="text-center text-[10px] text-muted-foreground -mt-1">
-            Opens {appName} · Payment is tracked in SmartPay AI
+            Logs the payment · Opens {appName} for you to complete it
           </p>
         </div>
       </BottomSheet>
@@ -209,10 +172,7 @@ export default function PaymentModal({ open, onClose, onSuccess }: PaymentModalP
         />
       )}
 
-      <PayAppSetupModal
-        open={showAppSetup}
-        onDone={() => setShowAppSetup(false)}
-      />
+      <PayAppSetupModal open={showAppSetup} onDone={() => setShowAppSetup(false)} />
     </>
   );
 }
