@@ -249,49 +249,106 @@ export default function Budget() {
               </div>
             </motion.div>
 
-            {/* Category allocation — simple list */}
+            {/* Category allocation — structured table */}
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} style={cardStyle} className="overflow-hidden">
-              <div className="px-4 pt-4 pb-2 flex items-center justify-between">
+              <div className="px-4 pt-4 pb-3 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-foreground">Category Limits</h3>
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Budget / Spent</span>
+                <span className="text-[10px] text-muted-foreground">Tap budget to edit</span>
               </div>
+
+              {/* Column headers */}
+              <div
+                className="grid px-4 pb-2"
+                style={{
+                  gridTemplateColumns: '2fr 2fr 1.8fr 1.8fr',
+                  borderBottom: '1px solid hsl(222 35% 20%)',
+                }}
+              >
+                {['Category', 'Budget', 'Actual', 'Remaining'].map(h => (
+                  <span key={h} className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'hsl(215 20% 45%)' }}>{h}</span>
+                ))}
+              </div>
+
+              {/* Data rows */}
               {settings.categories.map((cat, i) => {
-                const spent = categorySpends[cat] || 0;
-                const budgeted = catBudgets[cat] || 0;
-                const over = budgeted > 0 && spent > budgeted;
+                const actual = categorySpends[cat] || 0;
+                const budget = catBudgets[cat] || 0;
+                const remaining = budget - actual;
+                const over = budget > 0 && actual > budget;
+                const remainColor = over ? '#FF4444' : budget === 0 ? 'hsl(215 20% 50%)' : remaining <= budget * 0.1 ? '#FFB800' : '#00D65E';
+
                 return (
                   <div
                     key={cat}
-                    className="px-4 py-3 flex items-center gap-3"
-                    style={{ borderTop: i > 0 ? '1px solid hsl(222 35% 18%)' : 'none' }}
+                    className="grid px-4 py-2.5 items-center"
+                    style={{
+                      gridTemplateColumns: '2fr 2fr 1.8fr 1.8fr',
+                      borderTop: i > 0 ? '1px solid hsl(222 35% 16%)' : 'none',
+                    }}
                   >
-                    {/* Category name */}
-                    <span className="text-sm font-medium text-foreground w-24 shrink-0">{cat}</span>
+                    {/* Category */}
+                    <span className="text-xs font-semibold text-foreground">{cat}</span>
 
-                    {/* Budget input */}
-                    <div className="flex items-center gap-1 flex-1 rounded-lg px-2 py-1.5" style={{ background: 'hsl(222 40% 16%)' }}>
-                      <span className="text-xs text-muted-foreground">₹</span>
+                    {/* Budget — editable */}
+                    <div className="flex items-center gap-0.5">
+                      <span className="text-[10px] text-muted-foreground">₹</span>
                       <input
                         type="number"
                         value={catBudgets[cat] || ''}
                         onChange={e => setCatBudgets(prev => ({ ...prev, [cat]: Number(e.target.value) }))}
                         onBlur={handleSave}
-                        placeholder="0"
-                        className="bg-transparent outline-none text-sm text-foreground w-full"
+                        placeholder="—"
+                        className="bg-transparent outline-none text-xs text-foreground w-full"
+                        style={{ maxWidth: 56 }}
                       />
                     </div>
 
-                    {/* Spent badge */}
-                    <span
-                      className="text-xs font-semibold shrink-0"
-                      style={{ color: over ? '#FF4444' : 'hsl(215 20% 50%)' }}
-                    >
-                      ₹{spent.toLocaleString('en-IN')}{over ? ' ⚠' : ''}
+                    {/* Actual spent */}
+                    <span className="text-xs font-semibold" style={{ color: over ? '#FF4444' : 'hsl(215 20% 70%)' }}>
+                      ₹{actual.toLocaleString('en-IN')}
                     </span>
+
+                    {/* Remaining / deviation */}
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs font-bold" style={{ color: remainColor }}>
+                        {budget === 0 ? '—' : (over ? '-' : '+') + '₹' + Math.abs(remaining).toLocaleString('en-IN')}
+                      </span>
+                      {over && <span className="text-[9px]">⚠</span>}
+                    </div>
                   </div>
                 );
               })}
-              <div className="px-4 py-3" style={{ borderTop: '1px solid hsl(222 35% 18%)' }}>
+
+              {/* Totals row */}
+              {(() => {
+                const totalActual = settings.categories.reduce((s, c) => s + (categorySpends[c] || 0), 0);
+                const totalBudgetSum = settings.categories.reduce((s, c) => s + (catBudgets[c] || 0), 0);
+                const totalRemaining = totalBudgetSum - totalActual;
+                const totalOver = totalActual > totalBudgetSum && totalBudgetSum > 0;
+                return (
+                  <div
+                    className="grid px-4 py-3 items-center"
+                    style={{
+                      gridTemplateColumns: '2fr 2fr 1.8fr 1.8fr',
+                      borderTop: '2px solid hsl(222 35% 20%)',
+                      background: 'hsl(222 40% 10%)',
+                    }}
+                  >
+                    <span className="text-[11px] font-bold text-foreground">Total</span>
+                    <span className="text-[11px] font-bold text-foreground">
+                      ₹{totalBudgetSum.toLocaleString('en-IN')}
+                    </span>
+                    <span className="text-[11px] font-bold" style={{ color: totalOver ? '#FF4444' : 'hsl(215 20% 70%)' }}>
+                      ₹{totalActual.toLocaleString('en-IN')}
+                    </span>
+                    <span className="text-[11px] font-bold" style={{ color: totalOver ? '#FF4444' : '#00D65E' }}>
+                      {totalBudgetSum === 0 ? '—' : (totalOver ? '-' : '+') + '₹' + Math.abs(totalRemaining).toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                );
+              })()}
+
+              <div className="px-4 py-3">
                 <button
                   onClick={handleSave}
                   className="w-full py-2.5 rounded-xl text-sm font-bold transition-all active:scale-95"
