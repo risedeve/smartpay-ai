@@ -249,42 +249,58 @@ export default function Budget() {
               </div>
             </motion.div>
 
-            {/* Category allocation */}
-            <div>
-              <h3 className="text-sm font-semibold text-foreground mb-3">Category Allocation</h3>
-              <div className="space-y-3">
-                {settings.categories.map((cat, i) => {
-                  const spent = categorySpends[cat] || 0;
-                  const budgeted = catBudgets[cat] || 0;
-                  const over = budgeted > 0 && spent > budgeted;
-                  return (
-                    <motion.div key={cat} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }} style={cardStyle} className="p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-semibold text-foreground">{cat}</span>
-                        <span className="text-xs font-semibold" style={{ color: over ? '#FF4444' : 'hsl(215 20% 55%)' }}>
-                          Spent ₹{spent.toLocaleString('en-IN')}
-                          {over && ' ⚠️'}
-                        </span>
-                      </div>
-                      {budgeted > 0 && (
-                        <div className="h-1.5 rounded-full mb-2 overflow-hidden" style={{ background: 'hsl(222 35% 20%)' }}>
-                          <div className="h-full rounded-full transition-all" style={{ width: `${Math.min((spent / budgeted) * 100, 100)}%`, background: over ? '#FF4444' : '#00D65E' }} />
-                        </div>
-                      )}
-                      <div className="flex items-center gap-2">
-                        <span className="text-muted-foreground text-sm">₹</span>
-                        <input type="number" value={catBudgets[cat] || 0}
-                          onChange={e => setCatBudgets(prev => ({ ...prev, [cat]: Number(e.target.value) }))}
-                          onBlur={handleSave}
-                          className="outline-none text-sm text-foreground w-full rounded-lg px-3 py-2"
-                          style={{ background: 'hsl(222 40% 16%)', border: '1px solid hsl(222 35% 22%)' }}
-                          placeholder="0" />
-                      </div>
-                    </motion.div>
-                  );
-                })}
+            {/* Category allocation — simple list */}
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} style={cardStyle} className="overflow-hidden">
+              <div className="px-4 pt-4 pb-2 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-foreground">Category Limits</h3>
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Budget / Spent</span>
               </div>
-            </div>
+              {settings.categories.map((cat, i) => {
+                const spent = categorySpends[cat] || 0;
+                const budgeted = catBudgets[cat] || 0;
+                const over = budgeted > 0 && spent > budgeted;
+                return (
+                  <div
+                    key={cat}
+                    className="px-4 py-3 flex items-center gap-3"
+                    style={{ borderTop: i > 0 ? '1px solid hsl(222 35% 18%)' : 'none' }}
+                  >
+                    {/* Category name */}
+                    <span className="text-sm font-medium text-foreground w-24 shrink-0">{cat}</span>
+
+                    {/* Budget input */}
+                    <div className="flex items-center gap-1 flex-1 rounded-lg px-2 py-1.5" style={{ background: 'hsl(222 40% 16%)' }}>
+                      <span className="text-xs text-muted-foreground">₹</span>
+                      <input
+                        type="number"
+                        value={catBudgets[cat] || ''}
+                        onChange={e => setCatBudgets(prev => ({ ...prev, [cat]: Number(e.target.value) }))}
+                        onBlur={handleSave}
+                        placeholder="0"
+                        className="bg-transparent outline-none text-sm text-foreground w-full"
+                      />
+                    </div>
+
+                    {/* Spent badge */}
+                    <span
+                      className="text-xs font-semibold shrink-0"
+                      style={{ color: over ? '#FF4444' : 'hsl(215 20% 50%)' }}
+                    >
+                      ₹{spent.toLocaleString('en-IN')}{over ? ' ⚠' : ''}
+                    </span>
+                  </div>
+                );
+              })}
+              <div className="px-4 py-3" style={{ borderTop: '1px solid hsl(222 35% 18%)' }}>
+                <button
+                  onClick={handleSave}
+                  className="w-full py-2.5 rounded-xl text-sm font-bold transition-all active:scale-95"
+                  style={{ background: '#00D65E', color: '#000' }}
+                >
+                  Save Budgets
+                </button>
+              </div>
+            </motion.div>
           </>
         ) : (
           /* ── COMPARE TAB ── */

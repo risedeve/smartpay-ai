@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ScanLine } from 'lucide-react';
+import { ScanLine, Download } from 'lucide-react';
 import { Link } from 'wouter';
 import PayButton from '@/components/PayButton';
 import PaymentModal from '@/components/PaymentModal';
@@ -16,13 +16,26 @@ export default function Index() {
   const [scanOpen, setScanOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [isReady, setIsReady] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
+  const [installDismissed, setInstallDismissed] = useState(false);
 
   const settings = getSettings();
   const [onboarded, setOnboarded] = useState(settings.onboarded);
 
   useEffect(() => {
     setIsReady(true);
+    const handler = (e: any) => { e.preventDefault(); setInstallPrompt(e); };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
+
+  const handleInstall = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') setInstallPrompt(null);
+    setInstallDismissed(true);
+  };
 
   const forceRefresh = useCallback(() => setRefresh(v => v + 1), []);
 
@@ -50,12 +63,28 @@ export default function Index() {
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="px-5 pt-6 pb-2"
+        className="px-5 pt-6 pb-2 flex items-start justify-between"
       >
-        <p className="text-xs font-medium text-muted-foreground tracking-widest uppercase">Welcome back</p>
-        <h1 className="text-2xl font-bold font-display text-foreground mt-0.5">
-          SmartPay <span className="text-gradient">AI</span>
-        </h1>
+        <div>
+          <p className="text-xs font-medium text-muted-foreground tracking-widest uppercase">Welcome back</p>
+          <h1 className="text-2xl font-bold font-display text-foreground mt-0.5">
+            {settings.userName ? (
+              <>{settings.userName} <span className="text-gradient">👋</span></>
+            ) : (
+              <>SmartPay <span className="text-gradient">AI</span></>
+            )}
+          </h1>
+        </div>
+        {installPrompt && !installDismissed && (
+          <button
+            onClick={handleInstall}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold mt-1 transition-all active:scale-95"
+            style={{ background: 'rgba(0,214,94,0.12)', color: '#00D65E', border: '1px solid rgba(0,214,94,0.25)' }}
+          >
+            <Download className="w-3.5 h-3.5" />
+            Install App
+          </button>
+        )}
       </motion.div>
 
       <SmartBanner key={refresh} />

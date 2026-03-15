@@ -8,6 +8,7 @@ export interface Settings {
   onboarded: boolean;
   preferredPayApp: PayApp | '';
   payAppName: string;
+  userName: string;
 }
 
 export interface Transaction {
@@ -36,7 +37,23 @@ const DEFAULT_SETTINGS: Settings = {
   onboarded: false,
   preferredPayApp: '',
   payAppName: '',
+  userName: '',
 };
+
+export function buildPaymentLink(app: PayApp | '', payee: string, amount: number, tn = ''): string {
+  // Accept 10-digit mobile → convert to UPI VPA
+  const pa = /^\d{10}$/.test(payee.trim()) ? `91${payee.trim()}@upi` : payee.trim();
+  const schemes: Record<string, string> = {
+    gpay: 'gpay://upi/pay',
+    phonepe: 'phonepe://pay',
+    paytm: 'paytmmp://pay',
+    upi: 'upi://pay',
+  };
+  const base = schemes[app || 'upi'] || 'upi://pay';
+  const p = new URLSearchParams({ pa, am: amount.toFixed(2), cu: 'INR' });
+  if (tn) p.set('tn', tn);
+  return `${base}?${p.toString()}`;
+}
 
 export function buildAppOpenLink(app: PayApp | ''): string {
   const schemes: Record<string, string> = {
