@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Store, CameraOff, Keyboard, SwitchCamera } from 'lucide-react';
+import { Store, CameraOff, Keyboard, SwitchCamera, AlertCircle } from 'lucide-react';
 import jsQR from 'jsqr';
 import {
   addTransaction, getSettings, checkBudgetAlert,
@@ -16,9 +16,9 @@ interface ScanPayModalProps {
 }
 
 interface UpiDetails {
-  pa: string;   // payee UPI ID
-  pn: string;   // payee name
-  am: string;   // amount
+  pa: string;
+  pn: string;
+  am: string;
 }
 
 const APP_COLORS: Record<string, string> = {
@@ -27,12 +27,21 @@ const APP_COLORS: Record<string, string> = {
 
 function parseUpiQr(raw: string): UpiDetails | null {
   try {
-    // UPI QR format: upi://pay?pa=...&pn=...&am=...
-    const url = raw.startsWith('upi://') ? raw : null;
-    if (!url) return null;
-    const params = new URLSearchParams(raw.split('?')[1] || '');
+    let upiString = raw.trim();
+
+    // Handle https-wrapped UPI links (some QR codes use redirect URLs)
+    // e.g. https://upi.npci.org.in/... or gpay.app/... shortcuts
+    const gpayMatch = upiString.match(/[?&](upi:\/\/[^&\s]+)/);
+    if (gpayMatch) upiString = decodeURIComponent(gpayMatch[1]);
+
+    // Accept both upi:// and upi://pay schemes
+    if (!upiString.toLowerCase().startsWith('upi://')) return null;
+
+    const queryPart = upiString.split('?')[1] || '';
+    const params = new URLSearchParams(queryPart);
     const pa = params.get('pa') || '';
     if (!pa) return null;
+
     return {
       pa,
       pn: params.get('pn') || params.get('mc') || '',
@@ -56,11 +65,15 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
   const [camError, setCamError] = useState('');
   const [scanning, setScanning] = useState(false);
   const [detected, setDetected] = useState(false);
+  const [nonUpiDetected, setNonUpiDetected] = useState(false);
+  const [scanLinePos, setScanLinePos] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number>(0);
+  const scanLineRaf = useRef<number>(0);
+  const scanLineDir = useRef<1 | -1>(1);
 
   const settings = getSettings();
   const appColor = APP_COLORS[settings.preferredPayApp] || '#00D65E';
@@ -69,6 +82,7 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
 
   const stopCamera = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
+    cancelAnimationFrame(scanLineRaf.current);
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop());
       streamRef.current = null;
@@ -79,39 +93,66 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
   const startCamera = useCallback(async () => {
     setCamError('');
     setDetected(false);
+    setNonUpiDetected(false);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
       });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.play();
+        await videoRef.current.play();
         setScanning(true);
       }
     } catch (err: any) {
-      setCamError(err?.name === 'NotAllowedError'
-        ? 'Camera permission denied. Please allow camera access and try again.'
-        : 'Camera not available on this device.');
+      const name = err?.name || '';
+      if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+        setCamError('Camera permission denied. Please allow camera access in your browser settings and try again.');
+      } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+        setCamError('No camera found on this device.');
+      } else if (name === 'NotReadableError') {
+        setCamError('Camera is in use by another app. Close other apps and try again.');
+      } else {
+        setCamError('Could not access camera. Try granting permission or use manual entry.');
+      }
     }
   }, []);
+
+  // Animate scan line
+  useEffect(() => {
+    if (!scanning) return;
+    let pos = 0;
+    const animate = () => {
+      pos += 1.2 * scanLineDir.current;
+      if (pos >= 90) { pos = 90; scanLineDir.current = -1; }
+      if (pos <= 0) { pos = 0; scanLineDir.current = 1; }
+      setScanLinePos(pos);
+      scanLineRaf.current = requestAnimationFrame(animate);
+    };
+    scanLineRaf.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(scanLineRaf.current);
+  }, [scanning]);
 
   // Scan frames for QR codes
   const scanFrame = useCallback(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) {
+    if (!video || !canvas || video.readyState < video.HAVE_ENOUGH_DATA) {
       rafRef.current = requestAnimationFrame(scanFrame);
       return;
     }
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return;
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const code = jsQR(imageData.data, imageData.width, imageData.height, {
-      inversionAttempts: 'dontInvert',
+      inversionAttempts: 'attemptBoth',
     });
     if (code?.data) {
       const upi = parseUpiQr(code.data);
@@ -123,6 +164,10 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
         if (upi.am) setAmount(upi.am);
         setStep('pay');
         return;
+      } else {
+        // QR detected but not a UPI QR — show hint
+        setNonUpiDetected(true);
+        setTimeout(() => setNonUpiDetected(false), 2000);
       }
     }
     rafRef.current = requestAnimationFrame(scanFrame);
@@ -130,9 +175,16 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
 
   useEffect(() => {
     if (scanning && videoRef.current) {
-      videoRef.current.onloadeddata = () => {
+      const startScan = () => {
+        cancelAnimationFrame(rafRef.current);
         rafRef.current = requestAnimationFrame(scanFrame);
       };
+      videoRef.current.addEventListener('loadeddata', startScan);
+      // If video data already available
+      if (videoRef.current.readyState >= videoRef.current.HAVE_ENOUGH_DATA) {
+        startScan();
+      }
+      return () => videoRef.current?.removeEventListener('loadeddata', startScan);
     }
   }, [scanning, scanFrame]);
 
@@ -144,6 +196,7 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
       setPayeeName('');
       setCategory('');
       setDetected(false);
+      setNonUpiDetected(false);
       startCamera();
     }
     if (!open) {
@@ -209,11 +262,12 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
                 ref={videoRef}
                 muted
                 playsInline
+                autoPlay
                 className="absolute inset-0 w-full h-full object-cover"
               />
               <canvas ref={canvasRef} className="hidden" />
 
-              {/* Corner markers */}
+              {/* Corner markers + scan line */}
               {scanning && !camError && (
                 <>
                   {[
@@ -222,14 +276,34 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
                     'bottom-3 left-3 border-b-2 border-l-2',
                     'bottom-3 right-3 border-b-2 border-r-2',
                   ].map((cls, i) => (
-                    <div key={i} className={`absolute w-7 h-7 ${cls}`} style={{ borderColor: '#00D65E', borderRadius: 3 }} />
+                    <div
+                      key={i}
+                      className={`absolute w-7 h-7 ${cls}`}
+                      style={{ borderColor: '#00D65E', borderRadius: 3 }}
+                    />
                   ))}
-                  {/* Scan line */}
+                  {/* Animated scan line */}
                   <div
-                    className="absolute left-3 right-3 h-[2px] animate-scan"
-                    style={{ background: '#00D65E', boxShadow: '0 0 8px #00D65E' }}
+                    className="absolute left-3 right-3 h-[2px]"
+                    style={{
+                      top: `${scanLinePos}%`,
+                      background: 'linear-gradient(90deg, transparent, #00D65E, transparent)',
+                      boxShadow: '0 0 8px #00D65E',
+                      transition: 'top 0.016s linear',
+                    }}
                   />
                 </>
+              )}
+
+              {/* Non-UPI QR hint */}
+              {nonUpiDetected && (
+                <div className="absolute bottom-3 left-3 right-3 flex items-center gap-2 px-3 py-2 rounded-xl"
+                  style={{ background: 'rgba(255,180,0,0.15)', border: '1px solid rgba(255,180,0,0.4)' }}>
+                  <AlertCircle className="w-4 h-4 shrink-0" style={{ color: '#FFB400' }} />
+                  <p className="text-[11px]" style={{ color: '#FFB400' }}>
+                    QR detected — not a UPI/GPay code. Try a merchant QR.
+                  </p>
+                </div>
               )}
 
               {/* No camera / error state */}
@@ -241,9 +315,11 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
                     {camError || 'Starting camera...'}
                   </p>
                   {camError && (
-                    <button onClick={startCamera}
+                    <button
+                      onClick={startCamera}
                       className="text-xs font-semibold px-4 py-2 rounded-xl"
-                      style={{ background: 'rgba(0,214,94,0.15)', color: '#00D65E' }}>
+                      style={{ background: 'rgba(0,214,94,0.15)', color: '#00D65E' }}
+                    >
                       Try Again
                     </button>
                   )}
@@ -252,7 +328,7 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
             </div>
 
             <p className="text-xs text-muted-foreground text-center">
-              Point camera at any UPI / GPay / PhonePe QR code
+              Point camera at any UPI / GPay / PhonePe merchant QR code
             </p>
 
             {/* Manual fallback */}
@@ -285,7 +361,6 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
 
             {/* Payee */}
             {detected && payeeUpi ? (
-              /* Scanned merchant card */
               <div className="flex items-center gap-4 p-4 rounded-2xl" style={inputStyle}>
                 <div className="w-12 h-12 rounded-full flex items-center justify-center shrink-0"
                   style={{ background: 'rgba(0,214,94,0.15)', border: '1px solid rgba(0,214,94,0.3)' }}>
@@ -296,14 +371,15 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
                   <p className="text-xs text-muted-foreground mt-0.5 truncate">{payeeUpi}</p>
                   <p className="text-[10px] mt-0.5" style={{ color: '#00D65E' }}>✓ Scanned from QR</p>
                 </div>
-                <button onClick={switchToManual}
+                <button
+                  onClick={switchToManual}
                   className="text-[10px] font-semibold px-2 py-1 rounded-lg"
-                  style={{ background: 'hsl(222 35% 22%)', color: 'hsl(215 20% 65%)' }}>
+                  style={{ background: 'hsl(222 35% 22%)', color: 'hsl(215 20% 65%)' }}
+                >
                   Change
                 </button>
               </div>
             ) : (
-              /* Manual UPI entry */
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pay to</label>
                 <input
