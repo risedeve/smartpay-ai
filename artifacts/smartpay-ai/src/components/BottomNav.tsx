@@ -1,10 +1,9 @@
-import { Home, LayoutDashboard, Clock, BookOpen, Lightbulb } from 'lucide-react';
+import { Home, LayoutDashboard, BookOpen, Lightbulb } from 'lucide-react';
 import { useLocation, Link } from 'wouter';
 
 const navItems = [
   { path: '/', icon: Home, label: 'Home' },
   { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { path: '/history', icon: Clock, label: 'History' },
   { path: '/budget', icon: BookOpen, label: 'Budget' },
   { path: '/insights', icon: Lightbulb, label: 'Insights' },
 ];

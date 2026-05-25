@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Download, ArrowLeftRight, CircleDollarSign, FileDown } from 'lucide-react';
+import { Download, ArrowLeftRight, IndianRupee, FileDown } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, Legend,
@@ -220,7 +220,7 @@ export default function Budget() {
               className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold transition-all rounded-xl capitalize"
               style={tab === t ? { background: '#00D65E', color: '#000' } : { color: 'hsl(215 20% 55%)' }}
             >
-              {t === 'budget' ? <CircleDollarSign className="w-4 h-4" /> : <ArrowLeftRight className="w-4 h-4" />}
+              {t === 'budget' ? <IndianRupee className="w-4 h-4" /> : <ArrowLeftRight className="w-4 h-4" />}
               {t === 'budget' ? 'Budget' : 'Compare'}
             </button>
           ))}
@@ -284,6 +284,8 @@ export default function Budget() {
                     style={{
                       gridTemplateColumns: '2fr 2fr 1.8fr 1.8fr',
                       borderTop: i > 0 ? '1px solid hsl(222 35% 16%)' : 'none',
+                      background: over ? 'rgba(255,68,68,0.07)' : 'transparent',
+                      borderLeft: over ? '3px solid #FF4444' : '3px solid transparent',
                     }}
                   >
                     {/* Category */}
