@@ -40,37 +40,70 @@ const DEFAULT_SETTINGS: Settings = {
   userName: '',
 };
 
-export function buildPaymentLink(app: PayApp | '', payee: string, amount: number, tn = ''): string {
-  // Accept 10-digit mobile → convert to UPI VPA
-  const pa = /^\d{10}$/.test(payee.trim()) ? `91${payee.trim()}@upi` : payee.trim();
-  const schemes: Record<string, string> = {
-    gpay: 'gpay://upi/pay',
+function normalisePayee(payee: string): string {
+  const v = payee.trim();
+  // 10-digit mobile: use @upi handle (NPCI-registered, works across apps)
+  // Do NOT prepend 91 — that produces an invalid VPA
+  if (/^\d{10}$/.test(v)) return `${v}@upi`;
+  return v;
+}
+
+/**
+ * Build an app-specific UPI deep link.
+ * Falls back to the standard upi://pay scheme if app is missing/unrecognised.
+ */
+export function buildPaymentLink(
+  app: PayApp | '',
+  payee: string,
+  amount: number,
+  tn = '',
+  pn = '',
+): string {
+  const pa = normalisePayee(payee);
+  const appSchemes: Record<string, string> = {
+    gpay:    'gpay://upi/pay',
     phonepe: 'phonepe://pay',
-    paytm: 'paytmmp://pay',
-    upi: 'upi://pay',
+    paytm:   'paytmmp://pay',
+    upi:     'upi://pay',
   };
-  const base = schemes[app || 'upi'] || 'upi://pay';
+  const scheme = (app && appSchemes[app]) ? appSchemes[app] : 'upi://pay';
   const p = new URLSearchParams({ pa, am: amount.toFixed(2), cu: 'INR' });
+  if (pn) p.set('pn', pn);
   if (tn) p.set('tn', tn);
-  return `${base}?${p.toString()}`;
+  return `${scheme}?${p.toString()}`;
+}
+
+/**
+ * Always-reliable fallback using the standard UPI intent scheme.
+ * Android will show an app-chooser; works even if the preferred app is not installed.
+ */
+export function buildFallbackUpiLink(
+  payee: string,
+  amount: number,
+  tn = '',
+  pn = '',
+): string {
+  const pa = normalisePayee(payee);
+  const p = new URLSearchParams({ pa, am: amount.toFixed(2), cu: 'INR' });
+  if (pn) p.set('pn', pn);
+  if (tn) p.set('tn', tn);
+  return `upi://pay?${p.toString()}`;
 }
 
 export function buildAppOpenLink(app: PayApp | ''): string {
   const schemes: Record<string, string> = {
-    gpay: 'gpay://',
+    gpay:    'gpay://',
     phonepe: 'phonepe://',
-    paytm: 'paytmmp://',
-    upi: 'upi://pay',
+    paytm:   'paytmmp://',
+    upi:     'upi://pay',
   };
-  return schemes[app || 'upi'] || 'upi://pay';
+  return schemes[app || ''] || 'upi://pay';
 }
 
 export function getSettings(): Settings {
   try {
     const data = localStorage.getItem('smartpay_settings');
-    if (data) {
-      return { ...DEFAULT_SETTINGS, ...JSON.parse(data) };
-    }
+    if (data) return { ...DEFAULT_SETTINGS, ...JSON.parse(data) };
   } catch (e) {
     console.error('Error reading settings', e);
   }
@@ -87,9 +120,7 @@ export function saveSettings(settings: Partial<Settings>) {
 export function getAllTransactions(): Transaction[] {
   try {
     const data = localStorage.getItem('smartpay_transactions');
-    if (data) {
-      return JSON.parse(data);
-    }
+    if (data) return JSON.parse(data);
   } catch (e) {
     console.error('Error reading transactions', e);
   }
@@ -185,11 +216,7 @@ export function checkBudgetAlert(category: string): BudgetAlertInfo {
     .filter(t => t.category === category)
     .reduce((s, t) => s + t.amount, 0);
 
-  if (catBudgetAmount === 0) {
-    return { kind: 'no_budget', category, spent: catSpent, budget: 0 };
-  }
-  if (catSpent > catBudgetAmount) {
-    return { kind: 'over_budget', category, spent: catSpent, budget: catBudgetAmount };
-  }
+  if (catBudgetAmount === 0) return { kind: 'no_budget', category, spent: catSpent, budget: 0 };
+  if (catSpent > catBudgetAmount) return { kind: 'over_budget', category, spent: catSpent, budget: catBudgetAmount };
   return { kind: 'none', category, spent: catSpent, budget: catBudgetAmount };
 }
