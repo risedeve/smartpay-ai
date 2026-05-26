@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "cwnwwgyiDh1vUEA1jbvx9"
+uri = "file://payment-code-for-expert.txt"
+type = "text"
+title = "SmartPay AI — Payment Code"

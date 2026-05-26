@@ -1,0 +1,873 @@
+====================================================
+FILE 1: artifacts/smartpay-ai/src/lib/storage.ts
+====================================================
+import { v4 as uuidv4 } from 'uuid';
+
+export type PayApp = 'gpay' | 'phonepe' | 'paytm' | 'upi';
+
+export interface Settings {
+  monthlyBudget: number;
+  categories: string[];
+  onboarded: boolean;
+  preferredPayApp: PayApp | '';
+  payAppName: string;
+  userName: string;
+}
+
+export interface Transaction {
+  id: string;
+  amount: number;
+  category: string;
+  note: string;
+  date: string;
+}
+
+export interface CategoryBudget {
+  category: string;
+  budget: number;
+}
+
+export interface MonthBudget {
+  totalBudget: number;
+  categoryBudgets: CategoryBudget[];
+}
+
+const DEFAULT_CATEGORIES = ['Food', 'Travel', 'Shopping', 'Bills', 'Entertainment', 'Health', 'Others'];
+
+const DEFAULT_SETTINGS: Settings = {
+  monthlyBudget: 50000,
+  categories: DEFAULT_CATEGORIES,
+  onboarded: false,
+  preferredPayApp: '',
+  payAppName: '',
+  userName: '',
+};
+
+export function buildPaymentLink(app: PayApp | '', payee: string, amount: number, tn = ''): string {
+  // Accept 10-digit mobile → convert to UPI VPA
+  const pa = /^\d{10}$/.test(payee.trim()) ? `91${payee.trim()}@upi` : payee.trim();
+  const schemes: Record<string, string> = {
+    gpay: 'gpay://upi/pay',
+    phonepe: 'phonepe://pay',
+    paytm: 'paytmmp://pay',
+    upi: 'upi://pay',
+  };
+  const base = schemes[app || 'upi'] || 'upi://pay';
+  const p = new URLSearchParams({ pa, am: amount.toFixed(2), cu: 'INR' });
+  if (tn) p.set('tn', tn);
+  return `${base}?${p.toString()}`;
+}
+
+export function buildAppOpenLink(app: PayApp | ''): string {
+  const schemes: Record<string, string> = {
+    gpay: 'gpay://',
+    phonepe: 'phonepe://',
+    paytm: 'paytmmp://',
+    upi: 'upi://pay',
+  };
+  return schemes[app || 'upi'] || 'upi://pay';
+}
+
+export function getSettings(): Settings {
+  try {
+    const data = localStorage.getItem('smartpay_settings');
+    if (data) {
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(data) };
+    }
+  } catch (e) {
+    console.error('Error reading settings', e);
+  }
+  return DEFAULT_SETTINGS;
+}
+
+export function saveSettings(settings: Partial<Settings>) {
+  const current = getSettings();
+  const updated = { ...current, ...settings };
+  localStorage.setItem('smartpay_settings', JSON.stringify(updated));
+  return updated;
+}
+
+export function getAllTransactions(): Transaction[] {
+  try {
+    const data = localStorage.getItem('smartpay_transactions');
+    if (data) {
+      return JSON.parse(data);
+    }
+  } catch (e) {
+    console.error('Error reading transactions', e);
+  }
+  return [];
+}
+
+export function getTransactionsByMonth(month: number, year: number): Transaction[] {
+  const all = getAllTransactions();
+  const start = new Date(year, month, 1).getTime();
+  const end = new Date(year, month + 1, 0, 23, 59, 59, 999).getTime();
+  return all
+    .filter(t => {
+      const time = new Date(t.date).getTime();
+      return time >= start && time <= end;
+    })
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+}
+
+export function getMonthTransactions(): Transaction[] {
+  const now = new Date();
+  return getTransactionsByMonth(now.getMonth(), now.getFullYear());
+}
+
+export function getMonthlySpend(): number {
+  return getMonthTransactions().reduce((sum, t) => sum + t.amount, 0);
+}
+
+export function getSpendForMonth(month: number, year: number): number {
+  return getTransactionsByMonth(month, year).reduce((sum, t) => sum + t.amount, 0);
+}
+
+export function addTransaction(data: Omit<Transaction, 'id' | 'date'>) {
+  const newTx: Transaction = {
+    ...data,
+    id: uuidv4(),
+    date: new Date().toISOString(),
+  };
+  const all = getAllTransactions();
+  all.push(newTx);
+  localStorage.setItem('smartpay_transactions', JSON.stringify(all));
+  return newTx;
+}
+
+export function deleteTransaction(id: string) {
+  const all = getAllTransactions();
+  const filtered = all.filter(t => t.id !== id);
+  localStorage.setItem('smartpay_transactions', JSON.stringify(filtered));
+}
+
+export function clearAllData() {
+  localStorage.removeItem('smartpay_settings');
+  localStorage.removeItem('smartpay_transactions');
+  localStorage.removeItem('smartpay_budgets');
+}
+
+export function getMonthBudget(month: number, year: number): MonthBudget {
+  try {
+    const key = `smartpay_budget_${year}_${month}`;
+    const data = localStorage.getItem(key);
+    if (data) return JSON.parse(data);
+  } catch (e) {
+    console.error('Error reading budget', e);
+  }
+  const settings = getSettings();
+  return {
+    totalBudget: settings.monthlyBudget,
+    categoryBudgets: settings.categories.map(c => ({ category: c, budget: 0 })),
+  };
+}
+
+export function saveMonthBudget(month: number, year: number, budget: MonthBudget) {
+  const key = `smartpay_budget_${year}_${month}`;
+  localStorage.setItem(key, JSON.stringify(budget));
+}
+
+export type BudgetAlertKind = 'none' | 'over_budget' | 'no_budget';
+
+export interface BudgetAlertInfo {
+  kind: BudgetAlertKind;
+  category: string;
+  spent: number;
+  budget: number;
+}
+
+export function checkBudgetAlert(category: string): BudgetAlertInfo {
+  const now = new Date();
+  const monthBudget = getMonthBudget(now.getMonth(), now.getFullYear());
+  const catEntry = monthBudget.categoryBudgets.find(c => c.category === category);
+  const catBudgetAmount = catEntry?.budget ?? 0;
+
+  const txns = getTransactionsByMonth(now.getMonth(), now.getFullYear());
+  const catSpent = txns
+    .filter(t => t.category === category)
+    .reduce((s, t) => s + t.amount, 0);
+
+  if (catBudgetAmount === 0) {
+    return { kind: 'no_budget', category, spent: catSpent, budget: 0 };
+  }
+  if (catSpent > catBudgetAmount) {
+    return { kind: 'over_budget', category, spent: catSpent, budget: catBudgetAmount };
+  }
+  return { kind: 'none', category, spent: catSpent, budget: catBudgetAmount };
+}
+
+
+====================================================
+FILE 2: artifacts/smartpay-ai/src/components/ScanPayModal.tsx
+====================================================
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Store, CameraOff, Keyboard, SwitchCamera, AlertCircle } from 'lucide-react';
+import jsQR from 'jsqr';
+import {
+  addTransaction, getSettings, checkBudgetAlert,
+  BudgetAlertInfo, buildPaymentLink,
+} from '@/lib/storage';
+import BottomSheet from './BottomSheet';
+import BudgetAlertModal from './BudgetAlertModal';
+import PayAppSetupModal from './PayAppSetupModal';
+
+interface ScanPayModalProps {
+  open: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+interface UpiDetails {
+  pa: string;
+  pn: string;
+  am: string;
+}
+
+const APP_COLORS: Record<string, string> = {
+  gpay: '#4285F4', phonepe: '#5f259f', paytm: '#00B9F1', upi: '#FF6B00',
+};
+
+function parseUpiQr(raw: string): UpiDetails | null {
+  try {
+    let upiString = raw.trim();
+
+    // Handle https-wrapped UPI links (some QR codes use redirect URLs)
+    // e.g. https://upi.npci.org.in/... or gpay.app/... shortcuts
+    const gpayMatch = upiString.match(/[?&](upi:\/\/[^&\s]+)/);
+    if (gpayMatch) upiString = decodeURIComponent(gpayMatch[1]);
+
+    // Accept both upi:// and upi://pay schemes
+    if (!upiString.toLowerCase().startsWith('upi://')) return null;
+
+    const queryPart = upiString.split('?')[1] || '';
+    const params = new URLSearchParams(queryPart);
+    const pa = params.get('pa') || '';
+    if (!pa) return null;
+
+    return {
+      pa,
+      pn: params.get('pn') || params.get('mc') || '',
+      am: params.get('am') || '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalProps) {
+  const [step, setStep] = useState<'scan' | 'pay'>('scan');
+  const [amount, setAmount] = useState('');
+  const [payeeName, setPayeeName] = useState('');
+  const [payeeUpi, setPayeeUpi] = useState('');
+  const [manualMode, setManualMode] = useState(false);
+  const [category, setCategory] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [alert, setAlert] = useState<BudgetAlertInfo | null>(null);
+  const [showAppSetup, setShowAppSetup] = useState(false);
+  const [camError, setCamError] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const [detected, setDetected] = useState(false);
+  const [nonUpiDetected, setNonUpiDetected] = useState(false);
+  const [scanLinePos, setScanLinePos] = useState(0);
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const rafRef = useRef<number>(0);
+  const scanLineRaf = useRef<number>(0);
+  const scanLineDir = useRef<1 | -1>(1);
+
+  const settings = getSettings();
+  const appColor = APP_COLORS[settings.preferredPayApp] || '#00D65E';
+  const appName = settings.payAppName || 'UPI App';
+  const cat = category || settings.categories[0] || 'Others';
+
+  const stopCamera = useCallback(() => {
+    cancelAnimationFrame(rafRef.current);
+    cancelAnimationFrame(scanLineRaf.current);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    setScanning(false);
+  }, []);
+
+  const startCamera = useCallback(async () => {
+    setCamError('');
+    setDetected(false);
+    setNonUpiDetected(false);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+        setScanning(true);
+      }
+    } catch (err: any) {
+      const name = err?.name || '';
+      if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+        setCamError('Camera permission denied. Please allow camera access in your browser settings and try again.');
+      } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+        setCamError('No camera found on this device.');
+      } else if (name === 'NotReadableError') {
+        setCamError('Camera is in use by another app. Close other apps and try again.');
+      } else {
+        setCamError('Could not access camera. Try granting permission or use manual entry.');
+      }
+    }
+  }, []);
+
+  // Animate scan line
+  useEffect(() => {
+    if (!scanning) return;
+    let pos = 0;
+    const animate = () => {
+      pos += 1.2 * scanLineDir.current;
+      if (pos >= 90) { pos = 90; scanLineDir.current = -1; }
+      if (pos <= 0) { pos = 0; scanLineDir.current = 1; }
+      setScanLinePos(pos);
+      scanLineRaf.current = requestAnimationFrame(animate);
+    };
+    scanLineRaf.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(scanLineRaf.current);
+  }, [scanning]);
+
+  // Scan frames for QR codes
+  const scanFrame = useCallback(() => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || video.readyState < video.HAVE_ENOUGH_DATA) {
+      rafRef.current = requestAnimationFrame(scanFrame);
+      return;
+    }
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(imageData.data, imageData.width, imageData.height, {
+      inversionAttempts: 'attemptBoth',
+    });
+    if (code?.data) {
+      const upi = parseUpiQr(code.data);
+      if (upi) {
+        setDetected(true);
+        stopCamera();
+        setPayeeUpi(upi.pa);
+        setPayeeName(upi.pn);
+        if (upi.am) setAmount(upi.am);
+        setStep('pay');
+        return;
+      } else {
+        // QR detected but not a UPI QR — show hint
+        setNonUpiDetected(true);
+        setTimeout(() => setNonUpiDetected(false), 2000);
+      }
+    }
+    rafRef.current = requestAnimationFrame(scanFrame);
+  }, [stopCamera]);
+
+  useEffect(() => {
+    if (scanning && videoRef.current) {
+      const startScan = () => {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = requestAnimationFrame(scanFrame);
+      };
+      videoRef.current.addEventListener('loadeddata', startScan);
+      // If video data already available
+      if (videoRef.current.readyState >= videoRef.current.HAVE_ENOUGH_DATA) {
+        startScan();
+      }
+      return () => videoRef.current?.removeEventListener('loadeddata', startScan);
+    }
+  }, [scanning, scanFrame]);
+
+  useEffect(() => {
+    if (open && !manualMode) {
+      setStep('scan');
+      setAmount('');
+      setPayeeUpi('');
+      setPayeeName('');
+      setCategory('');
+      setDetected(false);
+      setNonUpiDetected(false);
+      startCamera();
+    }
+    if (!open) {
+      stopCamera();
+      setManualMode(false);
+      setStep('scan');
+    }
+  }, [open]);
+
+  const switchToManual = () => {
+    stopCamera();
+    setManualMode(true);
+    setStep('pay');
+  };
+
+  const isValidUpi = (val: string) => {
+    if (!val.trim()) return false;
+    return /^\d{10}$/.test(val.trim()) || /^[\w.\-+]+@[\w]+$/.test(val.trim());
+  };
+
+  const handlePay = () => {
+    const s = getSettings();
+    if (!s.preferredPayApp) { setShowAppSetup(true); return; }
+    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) return;
+    if (!isValidUpi(payeeUpi)) return;
+
+    setIsSubmitting(true);
+    addTransaction({
+      amount: Number(amount),
+      category: cat,
+      note: payeeName ? `Payment to ${payeeName}` : `Payment to ${payeeUpi}`,
+    });
+
+    const link = buildPaymentLink(s.preferredPayApp, payeeUpi, Number(amount));
+    window.location.href = link;
+
+    setTimeout(() => {
+      const info = checkBudgetAlert(cat);
+      setIsSubmitting(false);
+      onSuccess();
+      onClose();
+      if (info.kind !== 'none') setAlert(info);
+    }, 600);
+  };
+
+  const inputStyle: React.CSSProperties = {
+    background: 'hsl(222 40% 16%)',
+    border: '1px solid hsl(222 35% 22%)',
+  };
+
+  return (
+    <>
+      <BottomSheet isOpen={open} onClose={onClose} title={step === 'scan' ? 'Scan QR Code' : 'Pay'}>
+        {step === 'scan' ? (
+          <div className="flex flex-col items-center py-4 gap-4">
+            {/* Camera viewfinder */}
+            <div
+              className="relative w-full rounded-2xl overflow-hidden"
+              style={{ aspectRatio: '1/1', maxHeight: 320, background: '#000' }}
+            >
+              {/* Live video */}
+              <video
+                ref={videoRef}
+                muted
+                playsInline
+                autoPlay
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+              <canvas ref={canvasRef} className="hidden" />
+
+              {/* Corner markers + scan line */}
+              {scanning && !camError && (
+                <>
+                  {[
+                    'top-3 left-3 border-t-2 border-l-2',
+                    'top-3 right-3 border-t-2 border-r-2',
+                    'bottom-3 left-3 border-b-2 border-l-2',
+                    'bottom-3 right-3 border-b-2 border-r-2',
+                  ].map((cls, i) => (
+                    <div
+                      key={i}
+                      className={`absolute w-7 h-7 ${cls}`}
+                      style={{ borderColor: '#00D65E', borderRadius: 3 }}
+                    />
+                  ))}
+                  {/* Animated scan line */}
+                  <div
+                    className="absolute left-3 right-3 h-[2px]"
+                    style={{
+                      top: `${scanLinePos}%`,
+                      background: 'linear-gradient(90deg, transparent, #00D65E, transparent)',
+                      boxShadow: '0 0 8px #00D65E',
+                      transition: 'top 0.016s linear',
+                    }}
+                  />
+                </>
+              )}
+
+              {/* Non-UPI QR hint */}
+              {nonUpiDetected && (
+                <div className="absolute bottom-3 left-3 right-3 flex items-center gap-2 px-3 py-2 rounded-xl"
+                  style={{ background: 'rgba(255,180,0,0.15)', border: '1px solid rgba(255,180,0,0.4)' }}>
+                  <AlertCircle className="w-4 h-4 shrink-0" style={{ color: '#FFB400' }} />
+                  <p className="text-[11px]" style={{ color: '#FFB400' }}>
+                    QR detected — not a UPI/GPay code. Try a merchant QR.
+                  </p>
+                </div>
+              )}
+
+              {/* No camera / error state */}
+              {(camError || !scanning) && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center"
+                  style={{ background: 'hsl(222 40% 10%)' }}>
+                  <CameraOff className="w-10 h-10 text-muted-foreground/40" />
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {camError || 'Starting camera...'}
+                  </p>
+                  {camError && (
+                    <button
+                      onClick={startCamera}
+                      className="text-xs font-semibold px-4 py-2 rounded-xl"
+                      style={{ background: 'rgba(0,214,94,0.15)', color: '#00D65E' }}
+                    >
+                      Try Again
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <p className="text-xs text-muted-foreground text-center">
+              Point camera at any UPI / GPay / PhonePe merchant QR code
+            </p>
+
+            {/* Manual fallback */}
+            <button
+              onClick={switchToManual}
+              className="flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold w-full justify-center"
+              style={{ background: 'hsl(222 40% 16%)', color: 'hsl(215 20% 65%)', border: '1px solid hsl(222 35% 22%)' }}
+            >
+              <Keyboard className="w-4 h-4" />
+              Enter UPI ID / Mobile manually
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4 py-1">
+            {/* App badge */}
+            <div className="flex items-center justify-between">
+              {settings.preferredPayApp ? (
+                <div className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-full font-semibold"
+                  style={{ background: `${appColor}15`, color: appColor, border: `1px solid ${appColor}30` }}>
+                  <span className="w-2 h-2 rounded-full" style={{ background: appColor }} />
+                  Opens {appName}
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground">No payment app selected</div>
+              )}
+              <button onClick={() => setShowAppSetup(true)} className="text-xs underline underline-offset-2 text-muted-foreground">
+                {settings.preferredPayApp ? 'Change' : 'Select App'}
+              </button>
+            </div>
+
+            {/* Payee */}
+            {detected && payeeUpi ? (
+              <div className="flex items-center gap-4 p-4 rounded-2xl" style={inputStyle}>
+                <div className="w-12 h-12 rounded-full flex items-center justify-center shrink-0"
+                  style={{ background: 'rgba(0,214,94,0.15)', border: '1px solid rgba(0,214,94,0.3)' }}>
+                  <Store className="w-6 h-6" style={{ color: '#00D65E' }} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  {payeeName && <p className="text-sm font-bold text-foreground">{payeeName}</p>}
+                  <p className="text-xs text-muted-foreground mt-0.5 truncate">{payeeUpi}</p>
+                  <p className="text-[10px] mt-0.5" style={{ color: '#00D65E' }}>✓ Scanned from QR</p>
+                </div>
+                <button
+                  onClick={switchToManual}
+                  className="text-[10px] font-semibold px-2 py-1 rounded-lg"
+                  style={{ background: 'hsl(222 35% 22%)', color: 'hsl(215 20% 65%)' }}
+                >
+                  Change
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pay to</label>
+                <input
+                  type="text"
+                  value={payeeUpi}
+                  onChange={e => setPayeeUpi(e.target.value)}
+                  placeholder="UPI ID (name@bank) or 10-digit mobile"
+                  autoFocus
+                  className="w-full px-4 py-3 text-sm text-foreground rounded-xl outline-none"
+                  style={inputStyle}
+                />
+                {payeeUpi && isValidUpi(payeeUpi) && (
+                  <p className="text-xs" style={{ color: '#00D65E' }}>
+                    {/^\d{10}$/.test(payeeUpi.trim()) ? '✓ Mobile number' : '✓ UPI ID'}
+                  </p>
+                )}
+                <button
+                  onClick={() => { setManualMode(false); setStep('scan'); startCamera(); }}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground underline underline-offset-2"
+                >
+                  <SwitchCamera className="w-3 h-3" /> Scan QR instead
+                </button>
+              </div>
+            )}
+
+            {/* Amount */}
+            <div className="flex items-center justify-center py-4 rounded-xl" style={inputStyle}>
+              <span className="text-2xl text-muted-foreground mr-2 font-display">₹</span>
+              <input
+                type="number"
+                value={amount}
+                onChange={e => setAmount(e.target.value)}
+                placeholder="0"
+                className="bg-transparent border-none outline-none w-32 text-4xl text-center font-display font-bold placeholder:text-muted-foreground/30"
+              />
+            </div>
+
+            {/* Category */}
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Category</label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {settings.categories.map(c => (
+                  <button key={c} type="button" onClick={() => setCategory(c)}
+                    className="py-2 px-1 rounded-lg text-[11px] font-semibold transition-all active:scale-95"
+                    style={cat === c
+                      ? { background: '#00D65E', color: '#000' }
+                      : { background: 'hsl(222 35% 18%)', color: 'hsl(215 20% 65%)' }}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Pay button */}
+            <button
+              onClick={handlePay}
+              disabled={!amount || !isValidUpi(payeeUpi) || isSubmitting}
+              className="w-full py-4 rounded-xl font-bold text-base transition-all active:scale-[0.98] disabled:opacity-40"
+              style={{ background: isSubmitting ? 'hsl(222 35% 22%)' : '#00D65E', color: isSubmitting ? '#666' : '#000' }}
+            >
+              {isSubmitting ? 'Opening...' : `Pay ₹${Number(amount || 0).toLocaleString('en-IN')} via ${appName}`}
+            </button>
+
+            <p className="text-center text-[10px] text-muted-foreground -mt-1">
+              Logs the payment · Opens {appName} to complete it
+            </p>
+          </div>
+        )}
+      </BottomSheet>
+
+      {alert && (
+        <BudgetAlertModal
+          open={!!alert}
+          onClose={() => setAlert(null)}
+          type={alert.kind === 'none' ? 'no_budget' : alert.kind}
+          category={alert.category}
+          spent={alert.spent}
+          budget={alert.budget}
+        />
+      )}
+
+      <PayAppSetupModal open={showAppSetup} onDone={() => setShowAppSetup(false)} />
+    </>
+  );
+}
+
+
+====================================================
+FILE 3: artifacts/smartpay-ai/src/components/PaymentModal.tsx
+====================================================
+import { useState } from 'react';
+import {
+  addTransaction, getSettings, checkBudgetAlert,
+  BudgetAlertInfo, buildPaymentLink, buildAppOpenLink,
+} from '@/lib/storage';
+import BottomSheet from './BottomSheet';
+import BudgetAlertModal from './BudgetAlertModal';
+import PayAppSetupModal from './PayAppSetupModal';
+
+interface PaymentModalProps {
+  open: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+const APP_COLORS: Record<string, string> = {
+  gpay: '#4285F4',
+  phonepe: '#5f259f',
+  paytm: '#00B9F1',
+  upi: '#FF6B00',
+};
+
+export default function PaymentModal({ open, onClose, onSuccess }: PaymentModalProps) {
+  const [amount, setAmount] = useState('');
+  const [payee, setPayee] = useState('');           // UPI ID or 10-digit mobile
+  const [category, setCategory] = useState('');
+  const [note, setNote] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [alert, setAlert] = useState<BudgetAlertInfo | null>(null);
+  const [showAppSetup, setShowAppSetup] = useState(false);
+  const [payeeError, setPayeeError] = useState('');
+
+  const settings = getSettings();
+  const cat = category || settings.categories[0] || 'Others';
+  const appColor = APP_COLORS[settings.preferredPayApp] || '#00D65E';
+  const appName = settings.payAppName || 'UPI App';
+
+  const isValidPayee = (val: string) => {
+    if (!val.trim()) return false;
+    const isMobile = /^\d{10}$/.test(val.trim());
+    const isUpi = /^[\w.\-+]+@[\w]+$/.test(val.trim());
+    return isMobile || isUpi;
+  };
+
+  const handlePayPress = () => {
+    if (!settings.preferredPayApp) { setShowAppSetup(true); return; }
+    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) return;
+
+    if (!isValidPayee(payee)) {
+      setPayeeError('Enter a valid UPI ID (e.g. name@oksbi) or 10-digit mobile number');
+      return;
+    }
+    setPayeeError('');
+    setIsSubmitting(true);
+
+    addTransaction({ amount: Number(amount), category: cat, note: note || `${cat} payment` });
+
+    const link = buildPaymentLink(settings.preferredPayApp, payee, Number(amount), note);
+    window.location.href = link;
+
+    setTimeout(() => {
+      const info = checkBudgetAlert(cat);
+      setIsSubmitting(false);
+      setAmount(''); setPayee(''); setNote(''); setCategory('');
+      onSuccess();
+      onClose();
+      if (info.kind !== 'none') setAlert(info);
+    }, 600);
+  };
+
+  const inputStyle: React.CSSProperties = {
+    background: 'hsl(222 40% 16%)',
+    border: '1px solid hsl(222 35% 22%)',
+  };
+
+  return (
+    <>
+      <BottomSheet isOpen={open} onClose={onClose} title="New Payment">
+        <div className="flex flex-col gap-4">
+
+          {/* App badge */}
+          <div className="flex items-center justify-between">
+            {settings.preferredPayApp ? (
+              <div className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-full font-semibold"
+                style={{ background: `${appColor}15`, color: appColor, border: `1px solid ${appColor}30` }}>
+                <span className="w-2 h-2 rounded-full" style={{ background: appColor }} />
+                Opens {appName}
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground">No payment app selected</div>
+            )}
+            <button onClick={() => setShowAppSetup(true)} className="text-xs underline underline-offset-2 text-muted-foreground">
+              {settings.preferredPayApp ? 'Change' : 'Select App'}
+            </button>
+          </div>
+
+          {/* Amount */}
+          <div className="flex flex-col items-center justify-center py-5 rounded-2xl" style={inputStyle}>
+            <span className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Amount</span>
+            <div className="flex items-center">
+              <span className="text-3xl text-muted-foreground mr-1 font-display">₹</span>
+              <input
+                type="number"
+                value={amount}
+                onChange={e => setAmount(e.target.value)}
+                placeholder="0"
+                autoFocus
+                className="bg-transparent border-none outline-none w-40 text-5xl text-center font-display font-bold text-foreground placeholder:text-muted-foreground/30"
+              />
+            </div>
+          </div>
+
+          {/* Pay to — UPI ID or Mobile */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Pay to
+            </label>
+            <input
+              type="text"
+              value={payee}
+              onChange={e => { setPayee(e.target.value); setPayeeError(''); }}
+              placeholder="UPI ID (name@bank) or Mobile number"
+              className="w-full px-4 py-3 text-sm text-foreground rounded-xl outline-none"
+              style={{
+                ...inputStyle,
+                border: payeeError ? '1px solid #FF4444' : '1px solid hsl(222 35% 22%)',
+              }}
+            />
+            {payeeError && <p className="text-xs" style={{ color: '#FF4444' }}>{payeeError}</p>}
+            {payee && isValidPayee(payee) && (
+              <p className="text-xs" style={{ color: '#00D65E' }}>
+                {/^\d{10}$/.test(payee.trim()) ? '✓ Mobile number' : '✓ UPI ID'}
+              </p>
+            )}
+          </div>
+
+          {/* Category */}
+          <div className="space-y-2">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Category</label>
+            <div className="grid grid-cols-4 gap-1.5">
+              {settings.categories.map(c => (
+                <button key={c} type="button" onClick={() => setCategory(c)}
+                  className="py-2 px-1 rounded-lg text-[11px] font-semibold transition-all active:scale-95"
+                  style={cat === c
+                    ? { background: '#00D65E', color: '#000' }
+                    : { background: 'hsl(222 35% 18%)', color: 'hsl(215 20% 65%)' }}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Note */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Note (optional)</label>
+            <input
+              type="text"
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              placeholder="What is this for?"
+              className="w-full px-4 py-3 text-sm text-foreground rounded-xl outline-none"
+              style={inputStyle}
+            />
+          </div>
+
+          {/* Pay button */}
+          <button
+            onClick={handlePayPress}
+            disabled={!amount || isSubmitting}
+            className="mt-1 w-full py-4 rounded-xl font-bold text-base transition-all active:scale-[0.98] disabled:opacity-40"
+            style={{ background: isSubmitting ? 'hsl(222 35% 22%)' : '#00D65E', color: isSubmitting ? '#666' : '#000' }}
+          >
+            {isSubmitting ? 'Opening...' : `Pay ₹${Number(amount || 0).toLocaleString('en-IN')} via ${appName}`}
+          </button>
+
+          <p className="text-center text-[10px] text-muted-foreground -mt-1">
+            Logs the payment · Opens {appName} to complete it
+          </p>
+        </div>
+      </BottomSheet>
+
+      {alert && (
+        <BudgetAlertModal
+          open={!!alert}
+          onClose={() => setAlert(null)}
+          type={alert.kind === 'none' ? 'no_budget' : alert.kind}
+          category={alert.category}
+          spent={alert.spent}
+          budget={alert.budget}
+        />
+      )}
+
+      <PayAppSetupModal open={showAppSetup} onDone={() => setShowAppSetup(false)} />
+    </>
+  );
+}
