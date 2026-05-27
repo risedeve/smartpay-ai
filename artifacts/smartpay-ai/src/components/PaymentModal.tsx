@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Smartphone, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
+import { Smartphone, CheckCircle2, XCircle, AlertCircle, Copy, Check } from 'lucide-react';
 import {
   addTransaction, getSettings, checkBudgetAlert,
   BudgetAlertInfo, buildPaymentLink, buildFallbackUpiLink,
@@ -7,6 +7,8 @@ import {
 import BottomSheet from './BottomSheet';
 import BudgetAlertModal from './BudgetAlertModal';
 import PayAppSetupModal from './PayAppSetupModal';
+
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
 
 interface PaymentModalProps {
   open: boolean;
@@ -43,6 +45,7 @@ export default function PaymentModal({ open, onClose, onSuccess }: PaymentModalP
   const [primaryLink, setPrimaryLink] = useState('');
   const [fallbackLink, setFallbackLink] = useState('');
   const [appOpenError, setAppOpenError] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const settings = getSettings();
   const cat = category || settings.categories[0] || 'Others';
@@ -54,7 +57,7 @@ export default function PaymentModal({ open, onClose, onSuccess }: PaymentModalP
     return /^\d{10}$/.test(val.trim()) || /^[\w.\-+]+@[\w]+$/.test(val.trim());
   };
 
-  // Step 1 → open UPI app, show confirm screen
+  // Step 1 → open UPI app (Android) or show manual instructions (iOS)
   const handlePayPress = () => {
     if (!settings.preferredPayApp) { setShowAppSetup(true); return; }
     if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) return;
@@ -69,13 +72,20 @@ export default function PaymentModal({ open, onClose, onSuccess }: PaymentModalP
     setPrimaryLink(primary);
     setFallbackLink(fallback);
     setAppOpenError(false);
+    setCopied(false);
     setStep('confirm');
 
-    try {
-      openUpiLink(primary);
-    } catch {
-      setAppOpenError(true);
+    // iOS blocks all UPI deep links from Safari/PWA — skip attempt, show manual UI
+    if (!isIOS) {
+      try { openUpiLink(primary); } catch { setAppOpenError(true); }
     }
+  };
+
+  const copyUpiId = () => {
+    navigator.clipboard.writeText(payee).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
   };
 
   // Step 2: user confirms payment succeeded → save transaction
@@ -224,86 +234,134 @@ export default function PaymentModal({ open, onClose, onSuccess }: PaymentModalP
         {/* ── STEP: CONFIRM ── */}
         {step === 'confirm' && (
           <div className="flex flex-col gap-4 py-2">
-            {/* Icon + heading */}
-            <div className="flex flex-col items-center text-center pt-3 pb-1 gap-3">
-              <div className="w-16 h-16 rounded-full flex items-center justify-center"
-                style={{ background: `${appColor}18`, border: `2px solid ${appColor}40` }}>
-                <Smartphone className="w-8 h-8" style={{ color: appColor }} />
-              </div>
-              <div>
-                <h2 className="text-base font-bold text-foreground">Complete in {appName}</h2>
-                <p className="text-xs text-muted-foreground mt-1 leading-relaxed max-w-[260px]">
-                  Finish the payment in your UPI app, then come back here and confirm.
-                </p>
-              </div>
-            </div>
 
-            {/* Payment summary */}
-            <div className="rounded-2xl p-4 space-y-2.5" style={inputStyle}>
-              <div className="flex justify-between items-center">
-                <span className="text-xs text-muted-foreground">Paying to</span>
-                <span className="text-xs font-semibold text-foreground">{payee}</span>
-              </div>
-              <div className="flex justify-between items-center"
-                style={{ borderTop: '1px solid hsl(222 35% 20%)', paddingTop: 10 }}>
-                <span className="text-xs text-muted-foreground">Amount</span>
-                <span className="text-lg font-bold" style={{ color: '#00D65E' }}>
-                  ₹{Number(amount).toLocaleString('en-IN')}
-                </span>
-              </div>
-              <div className="flex justify-between items-center"
-                style={{ borderTop: '1px solid hsl(222 35% 20%)', paddingTop: 10 }}>
-                <span className="text-xs text-muted-foreground">Category</span>
-                <span className="text-xs font-semibold text-foreground">{cat}</span>
-              </div>
-              {note ? (
-                <div className="flex justify-between items-center"
-                  style={{ borderTop: '1px solid hsl(222 35% 20%)', paddingTop: 10 }}>
-                  <span className="text-xs text-muted-foreground">Note</span>
-                  <span className="text-xs text-foreground">{note}</span>
+            {isIOS ? (
+              /* ── iOS: deep links blocked — show manual instructions ── */
+              <>
+                <div className="flex flex-col items-center text-center pt-2 gap-3">
+                  <div className="w-14 h-14 rounded-full flex items-center justify-center"
+                    style={{ background: 'rgba(255,149,0,0.15)', border: '2px solid rgba(255,149,0,0.4)' }}>
+                    <Smartphone className="w-7 h-7" style={{ color: '#FF9500' }} />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold text-foreground">Pay Manually on iPhone</h2>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed max-w-[270px]">
+                      Safari cannot open UPI apps directly. Open GPay / PhonePe / Paytm yourself and pay using the details below.
+                    </p>
+                  </div>
                 </div>
-              ) : null}
-            </div>
 
-            {/* App didn't open */}
-            {appOpenError && (
-              <div className="flex items-center gap-2 p-3 rounded-xl"
-                style={{ background: 'rgba(255,68,68,0.08)', border: '1px solid rgba(255,68,68,0.25)' }}>
-                <AlertCircle className="w-4 h-4 shrink-0" style={{ color: '#FF4444' }} />
-                <p className="text-[11px]" style={{ color: '#FF4444' }}>
-                  App didn't open.{' '}
-                  <button
-                    onClick={() => { setAppOpenError(false); openUpiLink(fallbackLink); }}
-                    className="underline underline-offset-2 font-semibold">
-                    Try generic UPI
-                  </button>
+                {/* Copyable UPI ID */}
+                <div className="rounded-2xl p-4 space-y-3" style={inputStyle}>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">UPI ID — tap to copy</p>
+                    <button onClick={copyUpiId}
+                      className="flex items-center justify-between w-full px-3 py-2.5 rounded-xl active:scale-[0.98] transition-all"
+                      style={{ background: 'hsl(222 35% 20%)', border: '1px solid hsl(222 30% 28%)' }}>
+                      <span className="text-sm font-bold text-foreground font-mono">{payee}</span>
+                      {copied
+                        ? <Check className="w-4 h-4 shrink-0" style={{ color: '#00D65E' }} />
+                        : <Copy className="w-4 h-4 shrink-0 text-muted-foreground" />}
+                    </button>
+                    {copied && <p className="text-[11px] mt-1" style={{ color: '#00D65E' }}>✓ Copied!</p>}
+                  </div>
+
+                  <div className="flex justify-between items-center"
+                    style={{ borderTop: '1px solid hsl(222 35% 20%)', paddingTop: 10 }}>
+                    <span className="text-xs text-muted-foreground">Amount to pay</span>
+                    <span className="text-lg font-bold" style={{ color: '#00D65E' }}>
+                      ₹{Number(amount).toLocaleString('en-IN')}
+                    </span>
+                  </div>
+
+                  {note ? (
+                    <div className="flex justify-between items-center"
+                      style={{ borderTop: '1px solid hsl(222 35% 20%)', paddingTop: 10 }}>
+                      <span className="text-xs text-muted-foreground">Note</span>
+                      <span className="text-xs text-foreground">{note}</span>
+                    </div>
+                  ) : null}
+                </div>
+
+                <p className="text-center text-[11px] text-muted-foreground leading-relaxed">
+                  After paying in your UPI app, come back here and confirm.
                 </p>
-              </div>
-            )}
+              </>
+            ) : (
+              /* ── Android: deep link was opened ── */
+              <>
+                <div className="flex flex-col items-center text-center pt-3 pb-1 gap-3">
+                  <div className="w-16 h-16 rounded-full flex items-center justify-center"
+                    style={{ background: `${appColor}18`, border: `2px solid ${appColor}40` }}>
+                    <Smartphone className="w-8 h-8" style={{ color: appColor }} />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold text-foreground">Complete in {appName}</h2>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed max-w-[260px]">
+                      Finish the payment in your UPI app, then come back here and confirm.
+                    </p>
+                  </div>
+                </div>
 
-            {!appOpenError && (
-              <button
-                onClick={() => openUpiLink(fallbackLink)}
-                className="text-center text-xs text-muted-foreground underline underline-offset-2">
-                App didn't open? Try generic UPI link
-              </button>
+                <div className="rounded-2xl p-4 space-y-2.5" style={inputStyle}>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-muted-foreground">Paying to</span>
+                    <span className="text-xs font-semibold text-foreground">{payee}</span>
+                  </div>
+                  <div className="flex justify-between items-center"
+                    style={{ borderTop: '1px solid hsl(222 35% 20%)', paddingTop: 10 }}>
+                    <span className="text-xs text-muted-foreground">Amount</span>
+                    <span className="text-lg font-bold" style={{ color: '#00D65E' }}>
+                      ₹{Number(amount).toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center"
+                    style={{ borderTop: '1px solid hsl(222 35% 20%)', paddingTop: 10 }}>
+                    <span className="text-xs text-muted-foreground">Category</span>
+                    <span className="text-xs font-semibold text-foreground">{cat}</span>
+                  </div>
+                  {note ? (
+                    <div className="flex justify-between items-center"
+                      style={{ borderTop: '1px solid hsl(222 35% 20%)', paddingTop: 10 }}>
+                      <span className="text-xs text-muted-foreground">Note</span>
+                      <span className="text-xs text-foreground">{note}</span>
+                    </div>
+                  ) : null}
+                </div>
+
+                {appOpenError ? (
+                  <div className="flex items-center gap-2 p-3 rounded-xl"
+                    style={{ background: 'rgba(255,68,68,0.08)', border: '1px solid rgba(255,68,68,0.25)' }}>
+                    <AlertCircle className="w-4 h-4 shrink-0" style={{ color: '#FF4444' }} />
+                    <p className="text-[11px]" style={{ color: '#FF4444' }}>
+                      App didn't open.{' '}
+                      <button onClick={() => { setAppOpenError(false); openUpiLink(fallbackLink); }}
+                        className="underline underline-offset-2 font-semibold">
+                        Try generic UPI
+                      </button>
+                    </p>
+                  </div>
+                ) : (
+                  <button onClick={() => openUpiLink(fallbackLink)}
+                    className="text-center text-xs text-muted-foreground underline underline-offset-2">
+                    App didn't open? Try generic UPI link
+                  </button>
+                )}
+              </>
             )}
 
             <p className="text-center text-xs font-semibold text-muted-foreground">
               Did the payment go through?
             </p>
 
-            {/* Confirm / Cancel */}
             <div className="flex gap-3">
-              <button
-                onClick={handleConfirmCancel}
+              <button onClick={handleConfirmCancel}
                 className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold text-sm"
                 style={{ background: 'hsl(222 40% 16%)', color: 'hsl(215 20% 65%)', border: '1px solid hsl(222 35% 22%)' }}>
                 <XCircle className="w-4 h-4" />
                 No, go back
               </button>
-              <button
-                onClick={handleConfirmSuccess}
+              <button onClick={handleConfirmSuccess}
                 className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold text-sm"
                 style={{ background: '#00D65E', color: '#000' }}>
                 <CheckCircle2 className="w-4 h-4" />
