@@ -21,7 +21,14 @@ const APP_COLORS: Record<string, string> = {
 type Step = 'pay' | 'confirm';
 
 function openUpiLink(link: string) {
-  window.location.href = link;
+  // Anchor-click method is more reliable than window.location.href for
+  // deep-link schemes (tez://, phonepe://, paytmmp://, upi://) on Android
+  const a = document.createElement('a');
+  a.href = link;
+  a.rel = 'noopener noreferrer';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 export default function PaymentModal({ open, onClose, onSuccess }: PaymentModalProps) {

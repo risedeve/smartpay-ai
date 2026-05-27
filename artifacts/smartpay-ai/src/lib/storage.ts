@@ -61,7 +61,7 @@ export function buildPaymentLink(
 ): string {
   const pa = normalisePayee(payee);
   const appSchemes: Record<string, string> = {
-    gpay:    'gpay://upi/pay',
+    gpay:    'tez://upi/pay',
     phonepe: 'phonepe://pay',
     paytm:   'paytmmp://pay',
     upi:     'upi://pay',

@@ -1,0 +1,54 @@
+function openGPay(upiId, name, amount) {
+  const link = `tez://upi/pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(name)}&am=${amount}&cu=INR`;
+  const a = document.createElement('a');
+  a.href = link;
+  a.rel = 'noopener noreferrer';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => showConfirmationPopup(amount, name), 2000);
+}
+
+function openPhonePe(upiId, name, amount) {
+  const link = `phonepe://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(name)}&am=${amount}&cu=INR`;
+  const a = document.createElement('a');
+  a.href = link;
+  a.rel = 'noopener noreferrer';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => showConfirmationPopup(amount, name), 2000);
+}
+
+function openPaytm(upiId, name, amount) {
+  const link = `paytmmp://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(name)}&am=${amount}&cu=INR`;
+  const a = document.createElement('a');
+  a.href = link;
+  a.rel = 'noopener noreferrer';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => showConfirmationPopup(amount, name), 2000);
+}
+
+function showConfirmationPopup(amount, merchant) {
+  const popup = document.createElement('div');
+  popup.id = 'payment-popup';
+  popup.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:white;padding:24px;border-radius:20px 20px 0 0;box-shadow:0 -4px 20px rgba(0,0,0,0.15);z-index:9999;text-align:center;';
+  popup.innerHTML = `
+    <h3 style="font-size:18px;margin-bottom:8px">Payment Confirmation</h3>
+    <p style="color:#666;margin-bottom:20px">Did you pay ₹${amount} to ${merchant}?</p>
+    <button onclick="confirmPaymentDone()" style="background:#16a34a;color:white;padding:14px;border:none;border-radius:10px;font-size:16px;font-weight:bold;width:100%;margin-bottom:10px">✅ Yes, Payment Done</button>
+    <button onclick="cancelPayment()" style="background:#f1f5f9;color:#333;padding:14px;border:none;border-radius:10px;font-size:16px;width:100%">❌ No, Cancel</button>
+  `;
+  document.body.appendChild(popup);
+}
+
+function confirmPaymentDone() {
+  document.getElementById('payment-popup').remove();
+  alert('✅ Expense recorded successfully!');
+}
+
+function cancelPayment() {
+  document.getElementById('payment-popup').remove();
+}

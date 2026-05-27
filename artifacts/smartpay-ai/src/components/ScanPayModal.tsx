@@ -51,9 +51,14 @@ function parseUpiQr(raw: string): UpiDetails | null {
 }
 
 function openUpiLink(link: string) {
-  // Use window.location.href — most reliable approach in Android browser/PWA
-  // The confirmation screen is shown immediately so user can confirm on return
-  window.location.href = link;
+  // Anchor-click method is more reliable than window.location.href for
+  // deep-link schemes (tez://, phonepe://, paytmmp://, upi://) on Android
+  const a = document.createElement('a');
+  a.href = link;
+  a.rel = 'noopener noreferrer';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 type Step = 'scan' | 'pay' | 'confirm';
