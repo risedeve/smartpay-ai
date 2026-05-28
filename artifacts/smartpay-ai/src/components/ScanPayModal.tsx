@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Store, CameraOff, Keyboard, SwitchCamera, AlertCircle, Smartphone, CheckCircle2, XCircle, Copy, Check } from 'lucide-react';
+import {
+  Store, CameraOff, AlertCircle, Smartphone,
+  CheckCircle2, XCircle, Copy, Check, ScanLine, X,
+} from 'lucide-react';
 import jsQR from 'jsqr';
 import {
   addTransaction, getSettings, checkBudgetAlert,
@@ -11,50 +14,30 @@ import PayAppSetupModal from './PayAppSetupModal';
 
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
 
+const APP_COLORS: Record<string, string> = {
+  gpay: '#4285F4', phonepe: '#5f259f', paytm: '#00B9F1', upi: '#FF6B00',
+};
+
 interface ScanPayModalProps {
   open: boolean;
   onClose: () => void;
   onSuccess: () => void;
 }
 
-interface UpiDetails {
-  pa: string;
-  pn: string;
-  am: string;
-}
-
-const APP_COLORS: Record<string, string> = {
-  gpay: '#4285F4', phonepe: '#5f259f', paytm: '#00B9F1', upi: '#FF6B00',
-};
-
-function parseUpiQr(raw: string): UpiDetails | null {
+function parseUpiQr(raw: string): { pa: string; pn: string; am: string } | null {
   try {
-    let upiString = raw.trim();
-
-    // Some QR codes embed upi:// inside an https redirect URL
-    const embedded = upiString.match(/[?&](upi:\/\/[^&\s]+)/);
-    if (embedded) upiString = decodeURIComponent(embedded[1]);
-
-    if (!upiString.toLowerCase().startsWith('upi://')) return null;
-
-    const queryPart = upiString.split('?')[1] || '';
-    const params = new URLSearchParams(queryPart);
-    const pa = params.get('pa') || '';
+    let s = raw.trim();
+    const embedded = s.match(/[?&](upi:\/\/[^&\s]+)/);
+    if (embedded) s = decodeURIComponent(embedded[1]);
+    if (!s.toLowerCase().startsWith('upi://')) return null;
+    const p = new URLSearchParams(s.split('?')[1] || '');
+    const pa = p.get('pa') || '';
     if (!pa) return null;
-
-    return {
-      pa,
-      pn: params.get('pn') || params.get('mc') || '',
-      am: params.get('am') || '',
-    };
-  } catch {
-    return null;
-  }
+    return { pa, pn: p.get('pn') || '', am: p.get('am') || '' };
+  } catch { return null; }
 }
 
 function openUpiLink(link: string) {
-  // Anchor-click method is more reliable than window.location.href for
-  // deep-link schemes (tez://, phonepe://, paytmmp://, upi://) on Android
   const a = document.createElement('a');
   a.href = link;
   a.rel = 'noopener noreferrer';
@@ -63,38 +46,45 @@ function openUpiLink(link: string) {
   document.body.removeChild(a);
 }
 
-type Step = 'scan' | 'pay' | 'confirm';
+type Step = 'pay' | 'confirm';
 
 export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalProps) {
-  const [step, setStep] = useState<Step>('scan');
-  const [amount, setAmount] = useState('');
+  const [step, setStep] = useState<Step>('pay');
+
+  // Payment fields
+  const [upiId, setUpiId]         = useState('');
   const [payeeName, setPayeeName] = useState('');
-  const [payeeUpi, setPayeeUpi] = useState('');
-  const [manualMode, setManualMode] = useState(false);
-  const [category, setCategory] = useState('');
-  const [alert, setAlert] = useState<BudgetAlertInfo | null>(null);
-  const [showAppSetup, setShowAppSetup] = useState(false);
-  const [camError, setCamError] = useState('');
-  const [scanning, setScanning] = useState(false);
-  const [detected, setDetected] = useState(false);
-  const [nonUpiDetected, setNonUpiDetected] = useState(false);
-  const [scanLinePos, setScanLinePos] = useState(0);
-  const [primaryLink, setPrimaryLink] = useState('');
+  const [amount, setAmount]       = useState('');
+  const [category, setCategory]   = useState('');
+  const [subCat, setSubCat]       = useState('');
+
+  // Scanner
+  const [showScanner, setShowScanner]         = useState(true);
+  const [scanning, setScanning]               = useState(false);
+  const [camError, setCamError]               = useState('');
+  const [nonUpiDetected, setNonUpiDetected]   = useState(false);
+  const [scanLinePos, setScanLinePos]         = useState(0);
+
+  // Confirm step
+  const [primaryLink, setPrimaryLink]   = useState('');
   const [fallbackLink, setFallbackLink] = useState('');
   const [appOpenError, setAppOpenError] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied]             = useState(false);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const rafRef = useRef<number>(0);
+  const [alert, setAlert]           = useState<BudgetAlertInfo | null>(null);
+  const [showAppSetup, setShowAppSetup] = useState(false);
+
+  const videoRef    = useRef<HTMLVideoElement>(null);
+  const canvasRef   = useRef<HTMLCanvasElement>(null);
+  const streamRef   = useRef<MediaStream | null>(null);
+  const rafRef      = useRef<number>(0);
   const scanLineRaf = useRef<number>(0);
   const scanLineDir = useRef<1 | -1>(1);
 
   const settings = getSettings();
+  const cat      = category || settings.categories[0] || 'Others';
   const appColor = APP_COLORS[settings.preferredPayApp] || '#00D65E';
-  const appName = settings.payAppName || 'UPI App';
-  const cat = category || settings.categories[0] || 'Others';
+  const appName  = settings.payAppName || 'UPI App';
 
   const stopCamera = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -108,11 +98,10 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
 
   const startCamera = useCallback(async () => {
     setCamError('');
-    setDetected(false);
     setNonUpiDetected(false);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
       });
       streamRef.current = stream;
       if (videoRef.current) {
@@ -122,24 +111,23 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
       }
     } catch (err: any) {
       const name = err?.name || '';
-      if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-        setCamError('Camera permission denied. Please allow camera access in your browser settings.');
-      } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
-        setCamError('No camera found on this device.');
-      } else if (name === 'NotReadableError') {
-        setCamError('Camera is in use by another app. Close other apps and try again.');
-      } else {
-        setCamError('Could not access camera. Use manual entry below.');
-      }
+      if (name === 'NotAllowedError' || name === 'PermissionDeniedError')
+        setCamError('Camera permission denied.');
+      else if (name === 'NotFoundError')
+        setCamError('No camera found.');
+      else if (name === 'NotReadableError')
+        setCamError('Camera in use by another app.');
+      else
+        setCamError('Could not access camera.');
     }
   }, []);
 
-  // Animate scan line
+  // Scan line animation
   useEffect(() => {
     if (!scanning) return;
     let pos = 0;
     const animate = () => {
-      pos += 1.2 * scanLineDir.current;
+      pos += 1.5 * scanLineDir.current;
       if (pos >= 90) { pos = 90; scanLineDir.current = -1; }
       if (pos <= 0)  { pos = 0;  scanLineDir.current = 1; }
       setScanLinePos(pos);
@@ -149,9 +137,9 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
     return () => cancelAnimationFrame(scanLineRaf.current);
   }, [scanning]);
 
-  // Scan frames
+  // QR frame scanner
   const scanFrame = useCallback(() => {
-    const video = videoRef.current;
+    const video  = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || video.readyState < video.HAVE_ENOUGH_DATA) {
       rafRef.current = requestAnimationFrame(scanFrame);
@@ -159,26 +147,23 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
     }
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return;
-    canvas.width = video.videoWidth;
+    canvas.width  = video.videoWidth;
     canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const code = jsQR(imageData.data, imageData.width, imageData.height, {
-      inversionAttempts: 'attemptBoth',
-    });
+    ctx.drawImage(video, 0, 0);
+    const img  = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
     if (code?.data) {
       const upi = parseUpiQr(code.data);
       if (upi) {
-        setDetected(true);
         stopCamera();
-        setPayeeUpi(upi.pa);
+        setShowScanner(false);
+        setUpiId(upi.pa);
         setPayeeName(upi.pn);
         if (upi.am) setAmount(upi.am);
-        setStep('pay');
         return;
       } else {
         setNonUpiDetected(true);
-        setTimeout(() => setNonUpiDetected(false), 2500);
+        setTimeout(() => setNonUpiDetected(false), 2000);
       }
     }
     rafRef.current = requestAnimationFrame(scanFrame);
@@ -197,70 +182,65 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
     }
   }, [scanning, scanFrame]);
 
-  // Open / close lifecycle
+  // Lifecycle: open/close
   useEffect(() => {
-    if (open && !manualMode) {
-      setStep('scan');
-      setAmount('');
-      setPayeeUpi('');
-      setPayeeName('');
-      setCategory('');
-      setDetected(false);
-      setNonUpiDetected(false);
-      setAppOpenError(false);
-      startCamera();
-    }
-    if (!open) {
+    if (open) {
+      setStep('pay');
+      setUpiId(''); setPayeeName(''); setAmount('');
+      setCategory(''); setSubCat('');
+      setShowScanner(true);
+      setAppOpenError(false); setCopied(false);
+    } else {
       stopCamera();
-      setManualMode(false);
-      setStep('scan');
-      setAppOpenError(false);
+      setShowScanner(false);
+      setStep('pay');
     }
   }, [open]);
 
-  const switchToManual = () => {
-    stopCamera();
-    setManualMode(true);
-    setStep('pay');
+  // Start/stop camera based on showScanner
+  useEffect(() => {
+    if (showScanner && open && step === 'pay') {
+      startCamera();
+    } else {
+      stopCamera();
+    }
+  }, [showScanner, open, step]);
+
+  // UPI input change — collapse scanner while typing
+  const handleUpiChange = (val: string) => {
+    setUpiId(val);
+    setPayeeName('');
+    if (val && showScanner) setShowScanner(false);
+  };
+
+  const clearUpi = () => {
+    setUpiId(''); setPayeeName(''); setShowScanner(true);
   };
 
   const isValidUpi = (val: string) =>
     /^\d{10}$/.test(val.trim()) || /^[\w.\-+]+@[\w]+$/.test(val.trim());
 
-  // Step 1 → 2: open UPI app (Android) or show manual instructions (iOS)
   const handlePay = () => {
-    const s = getSettings();
-    if (!s.preferredPayApp) { setShowAppSetup(true); return; }
+    if (!settings.preferredPayApp) { setShowAppSetup(true); return; }
     if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) return;
-    if (!isValidUpi(payeeUpi)) return;
+    if (!isValidUpi(upiId)) return;
 
-    const primary  = buildPaymentLink(s.preferredPayApp, payeeUpi, Number(amount), '', payeeName);
-    const fallback = buildFallbackUpiLink(payeeUpi, Number(amount), '', payeeName);
+    const primary  = buildPaymentLink(settings.preferredPayApp, upiId, Number(amount), subCat || '', payeeName);
+    const fallback = buildFallbackUpiLink(upiId, Number(amount), subCat || '', payeeName);
     setPrimaryLink(primary);
     setFallbackLink(fallback);
-    setAppOpenError(false);
-    setCopied(false);
+    setAppOpenError(false); setCopied(false);
     setStep('confirm');
-
-    // iOS blocks all UPI deep links from Safari/PWA — skip attempt, show manual UI
     if (!isIOS) {
       try { openUpiLink(primary); } catch { setAppOpenError(true); }
     }
   };
 
-  const copyUpiId = () => {
-    navigator.clipboard.writeText(payeeUpi).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
-
-  // Step 2: user confirms payment succeeded → save transaction
   const handleConfirmSuccess = () => {
     addTransaction({
       amount: Number(amount),
       category: cat,
-      note: payeeName ? `Payment to ${payeeName}` : `Payment to ${payeeUpi}`,
+      note: [payeeName || upiId, subCat].filter(Boolean).join(' • '),
     });
     const info = checkBudgetAlert(cat);
     onSuccess();
@@ -268,10 +248,13 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
     if (info.kind !== 'none') setAlert(info);
   };
 
-  // Step 2: user says payment failed → go back
-  const handleConfirmCancel = () => {
-    setStep('pay');
-    setAppOpenError(false);
+  const handleConfirmCancel = () => { setStep('pay'); setAppOpenError(false); };
+
+  const copyUpiId = () => {
+    navigator.clipboard.writeText(upiId).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
   };
 
   const inputStyle: React.CSSProperties = {
@@ -281,80 +264,15 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
 
   return (
     <>
-      <BottomSheet isOpen={open} onClose={onClose} title={
-        step === 'scan' ? 'Scan QR Code' : step === 'pay' ? 'Pay' : 'Confirm Payment'
-      }>
-
-        {/* ── STEP: SCAN ── */}
-        {step === 'scan' && (
-          <div className="flex flex-col items-center py-4 gap-4">
-            <div className="relative w-full rounded-2xl overflow-hidden"
-              style={{ aspectRatio: '1/1', maxHeight: 320, background: '#000' }}>
-              <video ref={videoRef} muted playsInline autoPlay
-                className="absolute inset-0 w-full h-full object-cover" />
-              <canvas ref={canvasRef} className="hidden" />
-
-              {scanning && !camError && (
-                <>
-                  {['top-3 left-3 border-t-2 border-l-2',
-                    'top-3 right-3 border-t-2 border-r-2',
-                    'bottom-3 left-3 border-b-2 border-l-2',
-                    'bottom-3 right-3 border-b-2 border-r-2'].map((cls, i) => (
-                    <div key={i} className={`absolute w-7 h-7 ${cls}`}
-                      style={{ borderColor: '#00D65E', borderRadius: 3 }} />
-                  ))}
-                  <div className="absolute left-3 right-3 h-[2px]" style={{
-                    top: `${scanLinePos}%`,
-                    background: 'linear-gradient(90deg, transparent, #00D65E, transparent)',
-                    boxShadow: '0 0 8px #00D65E',
-                  }} />
-                </>
-              )}
-
-              {nonUpiDetected && (
-                <div className="absolute bottom-3 left-3 right-3 flex items-center gap-2 px-3 py-2 rounded-xl"
-                  style={{ background: 'rgba(255,180,0,0.15)', border: '1px solid rgba(255,180,0,0.4)' }}>
-                  <AlertCircle className="w-4 h-4 shrink-0" style={{ color: '#FFB400' }} />
-                  <p className="text-[11px]" style={{ color: '#FFB400' }}>
-                    QR detected — not a UPI code. Try a merchant QR.
-                  </p>
-                </div>
-              )}
-
-              {(camError || !scanning) && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center"
-                  style={{ background: 'hsl(222 40% 10%)' }}>
-                  <CameraOff className="w-10 h-10 text-muted-foreground/40" />
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    {camError || 'Starting camera...'}
-                  </p>
-                  {camError && (
-                    <button onClick={startCamera}
-                      className="text-xs font-semibold px-4 py-2 rounded-xl"
-                      style={{ background: 'rgba(0,214,94,0.15)', color: '#00D65E' }}>
-                      Try Again
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <p className="text-xs text-muted-foreground text-center">
-              Point camera at any UPI / GPay / PhonePe merchant QR code
-            </p>
-
-            <button onClick={switchToManual}
-              className="flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold w-full justify-center"
-              style={{ background: 'hsl(222 40% 16%)', color: 'hsl(215 20% 65%)', border: '1px solid hsl(222 35% 22%)' }}>
-              <Keyboard className="w-4 h-4" />
-              Enter UPI ID / Mobile manually
-            </button>
-          </div>
-        )}
-
+      <BottomSheet
+        isOpen={open}
+        onClose={onClose}
+        title={step === 'pay' ? 'Pay' : 'Confirm Payment'}
+      >
         {/* ── STEP: PAY ── */}
         {step === 'pay' && (
-          <div className="flex flex-col gap-4 py-1">
+          <div className="flex flex-col gap-3 py-1">
+
             {/* App badge */}
             <div className="flex items-center justify-between">
               {settings.preferredPayApp ? (
@@ -368,63 +286,133 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
               )}
               <button onClick={() => setShowAppSetup(true)}
                 className="text-xs underline underline-offset-2 text-muted-foreground">
-                {settings.preferredPayApp ? 'Change' : 'Select App'}
+                {settings.preferredPayApp ? 'Change app' : 'Select app'}
               </button>
             </div>
 
-            {/* Payee */}
-            {detected && payeeUpi ? (
-              <div className="flex items-center gap-4 p-4 rounded-2xl" style={inputStyle}>
-                <div className="w-12 h-12 rounded-full flex items-center justify-center shrink-0"
-                  style={{ background: 'rgba(0,214,94,0.15)', border: '1px solid rgba(0,214,94,0.3)' }}>
-                  <Store className="w-6 h-6" style={{ color: '#00D65E' }} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  {payeeName && <p className="text-sm font-bold text-foreground">{payeeName}</p>}
-                  <p className="text-xs text-muted-foreground mt-0.5 truncate">{payeeUpi}</p>
-                  <p className="text-[10px] mt-0.5" style={{ color: '#00D65E' }}>✓ Scanned from QR</p>
-                </div>
-                <button onClick={switchToManual}
-                  className="text-[10px] font-semibold px-2 py-1 rounded-lg"
-                  style={{ background: 'hsl(222 35% 22%)', color: 'hsl(215 20% 65%)' }}>
-                  Change
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pay to</label>
-                <input type="text" value={payeeUpi} onChange={e => setPayeeUpi(e.target.value)}
-                  placeholder="UPI ID (name@bank) or 10-digit mobile"
-                  autoFocus
-                  className="w-full px-4 py-3 text-sm text-foreground rounded-xl outline-none"
-                  style={inputStyle} />
-                {payeeUpi && isValidUpi(payeeUpi) && (
-                  <p className="text-xs" style={{ color: '#00D65E' }}>
-                    {/^\d{10}$/.test(payeeUpi.trim()) ? '✓ Mobile number' : '✓ UPI ID'}
-                  </p>
+            {/* UPI ID / Mobile input */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pay to</label>
+              <div className="flex items-center gap-2 px-4 py-3 rounded-xl" style={inputStyle}>
+                <input
+                  type="text"
+                  value={upiId}
+                  onChange={e => handleUpiChange(e.target.value)}
+                  placeholder="UPI ID (name@bank) or mobile number"
+                  className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/50"
+                />
+                {upiId ? (
+                  <button onClick={clearUpi} className="shrink-0 p-1 rounded-full"
+                    style={{ background: 'hsl(222 35% 22%)' }}>
+                    <X className="w-3.5 h-3.5 text-muted-foreground" />
+                  </button>
+                ) : (
+                  <button onClick={() => setShowScanner(s => !s)}
+                    className="shrink-0 flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg"
+                    style={showScanner
+                      ? { background: `${appColor}20`, color: appColor }
+                      : { background: 'hsl(222 35% 22%)', color: 'hsl(215 20% 60%)' }}>
+                    <ScanLine className="w-3.5 h-3.5" />
+                    {showScanner ? 'Hide' : 'Scan'}
+                  </button>
                 )}
-                <button onClick={() => { setManualMode(false); setStep('scan'); startCamera(); }}
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground underline underline-offset-2">
-                  <SwitchCamera className="w-3 h-3" /> Scan QR instead
-                </button>
+              </div>
+              {upiId && isValidUpi(upiId) && (
+                <div className="flex items-center gap-1.5">
+                  {payeeName && (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full"
+                      style={{ background: 'rgba(0,214,94,0.12)', border: '1px solid rgba(0,214,94,0.2)' }}>
+                      <Store className="w-3 h-3" style={{ color: '#00D65E' }} />
+                      <span className="text-[11px] font-semibold" style={{ color: '#00D65E' }}>{payeeName}</span>
+                    </div>
+                  )}
+                  <p className="text-xs" style={{ color: '#00D65E' }}>
+                    {!payeeName && (/^\d{10}$/.test(upiId.trim()) ? '✓ Mobile number' : '✓ UPI ID')}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Compact Camera Scanner */}
+            {showScanner && !upiId && (
+              <div className="relative w-full rounded-2xl overflow-hidden"
+                style={{ height: 176, background: '#000' }}>
+                <video ref={videoRef} muted playsInline autoPlay
+                  className="absolute inset-0 w-full h-full object-cover" />
+                <canvas ref={canvasRef} className="hidden" />
+
+                {scanning && !camError && (
+                  <>
+                    {['top-2 left-2 border-t-2 border-l-2',
+                      'top-2 right-2 border-t-2 border-r-2',
+                      'bottom-2 left-2 border-b-2 border-l-2',
+                      'bottom-2 right-2 border-b-2 border-r-2'].map((cls, i) => (
+                      <div key={i} className={`absolute w-6 h-6 ${cls}`}
+                        style={{ borderColor: '#00D65E', borderRadius: 3 }} />
+                    ))}
+                    <div className="absolute left-3 right-3 h-[2px]" style={{
+                      top: `${scanLinePos}%`,
+                      background: 'linear-gradient(90deg, transparent, #00D65E, transparent)',
+                      boxShadow: '0 0 8px #00D65E',
+                    }} />
+                    <div className="absolute bottom-2 left-0 right-0 text-center">
+                      <span className="text-[10px] font-medium px-2 py-0.5 rounded-full"
+                        style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}>
+                        Point at any UPI / GPay QR code
+                      </span>
+                    </div>
+                  </>
+                )}
+
+                {nonUpiDetected && (
+                  <div className="absolute bottom-2 left-2 right-2 flex items-center gap-2 px-3 py-1.5 rounded-xl"
+                    style={{ background: 'rgba(255,180,0,0.2)', border: '1px solid rgba(255,180,0,0.4)' }}>
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" style={{ color: '#FFB400' }} />
+                    <p className="text-[10px]" style={{ color: '#FFB400' }}>Not a UPI QR — try a merchant code</p>
+                  </div>
+                )}
+
+                {(camError || (!scanning && !camError)) && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center"
+                    style={{ background: 'hsl(222 40% 10%)' }}>
+                    <CameraOff className="w-8 h-8 text-muted-foreground/30" />
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      {camError || 'Starting camera...'}
+                    </p>
+                    {camError && (
+                      <button onClick={startCamera}
+                        className="text-xs font-semibold px-3 py-1.5 rounded-lg"
+                        style={{ background: 'rgba(0,214,94,0.15)', color: '#00D65E' }}>
+                        Retry
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
             {/* Amount */}
-            <div className="flex items-center justify-center py-4 rounded-xl" style={inputStyle}>
-              <span className="text-2xl text-muted-foreground mr-2 font-display">₹</span>
-              <input type="number" value={amount} onChange={e => setAmount(e.target.value)}
-                placeholder="0"
-                className="bg-transparent border-none outline-none w-32 text-4xl text-center font-display font-bold placeholder:text-muted-foreground/30" />
+            <div className="flex flex-col items-center justify-center py-4 rounded-2xl" style={inputStyle}>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Amount</span>
+              <div className="flex items-center">
+                <span className="text-2xl text-muted-foreground mr-1 font-display">₹</span>
+                <input
+                  type="number"
+                  value={amount}
+                  onChange={e => setAmount(e.target.value)}
+                  placeholder="0"
+                  className="bg-transparent border-none outline-none w-36 text-4xl text-center font-display font-bold text-foreground placeholder:text-muted-foreground/30"
+                />
+              </div>
             </div>
 
             {/* Category */}
             <div className="space-y-2">
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Category</label>
-              <div className="grid grid-cols-4 gap-1.5">
+              <div className="flex flex-wrap gap-1.5">
                 {settings.categories.map(c => (
                   <button key={c} type="button" onClick={() => setCategory(c)}
-                    className="py-2 px-1 rounded-lg text-[11px] font-semibold transition-all active:scale-95"
+                    className="py-1.5 px-3 rounded-full text-[11px] font-semibold transition-all active:scale-95"
                     style={cat === c
                       ? { background: '#00D65E', color: '#000' }
                       : { background: 'hsl(222 35% 18%)', color: 'hsl(215 20% 65%)' }}>
@@ -434,9 +422,25 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
               </div>
             </div>
 
+            {/* Sub-category / Note */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Sub-category / Note <span className="normal-case font-normal opacity-60">(optional)</span>
+              </label>
+              <input
+                type="text"
+                value={subCat}
+                onChange={e => setSubCat(e.target.value)}
+                placeholder={`e.g. Rashan, Coffee, Netflix...`}
+                className="w-full px-4 py-3 text-sm text-foreground rounded-xl outline-none"
+                style={inputStyle}
+              />
+            </div>
+
             {/* Pay button */}
-            <button onClick={handlePay}
-              disabled={!amount || !isValidUpi(payeeUpi)}
+            <button
+              onClick={handlePay}
+              disabled={!amount || !isValidUpi(upiId)}
               className="w-full py-4 rounded-xl font-bold text-base transition-all active:scale-[0.98] disabled:opacity-40"
               style={{ background: '#00D65E', color: '#000' }}>
               Pay ₹{Number(amount || 0).toLocaleString('en-IN')} via {appName}
@@ -453,7 +457,6 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
           <div className="flex flex-col gap-4 py-2">
 
             {isIOS ? (
-              /* ── iOS: deep links blocked — show manual instructions ── */
               <>
                 <div className="flex flex-col items-center text-center pt-2 gap-3">
                   <div className="w-14 h-14 rounded-full flex items-center justify-center"
@@ -463,7 +466,7 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
                   <div>
                     <h2 className="text-base font-bold text-foreground">Pay Manually on iPhone</h2>
                     <p className="text-xs text-muted-foreground mt-1 leading-relaxed max-w-[270px]">
-                      Safari cannot open UPI apps directly. Open GPay / PhonePe / Paytm yourself and pay using the details below.
+                      Safari cannot open UPI apps directly. Open GPay / PhonePe / Paytm and pay using the details below.
                     </p>
                   </div>
                 </div>
@@ -475,35 +478,39 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
                       <span className="text-xs font-bold text-foreground">{payeeName}</span>
                     </div>
                   )}
-
-                  <div className={payeeName ? 'border-t border-hsl-separator pt-3' : ''}>
+                  <div>
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">UPI ID — tap to copy</p>
                     <button onClick={copyUpiId}
-                      className="flex items-center justify-between w-full px-3 py-2.5 rounded-xl active:scale-[0.98] transition-all"
+                      className="flex items-center justify-between w-full px-3 py-2.5 rounded-xl active:scale-[0.98]"
                       style={{ background: 'hsl(222 35% 20%)', border: '1px solid hsl(222 30% 28%)' }}>
-                      <span className="text-sm font-bold text-foreground font-mono">{payeeUpi}</span>
+                      <span className="text-sm font-bold text-foreground font-mono">{upiId}</span>
                       {copied
                         ? <Check className="w-4 h-4 shrink-0" style={{ color: '#00D65E' }} />
                         : <Copy className="w-4 h-4 shrink-0 text-muted-foreground" />}
                     </button>
                     {copied && <p className="text-[11px] mt-1" style={{ color: '#00D65E' }}>✓ Copied!</p>}
                   </div>
-
-                  <div style={{ borderTop: '1px solid hsl(222 35% 20%)', paddingTop: 10 }}
-                    className="flex justify-between items-center">
+                  <div className="flex justify-between items-center"
+                    style={{ borderTop: '1px solid hsl(222 35% 20%)', paddingTop: 10 }}>
                     <span className="text-xs text-muted-foreground">Amount to pay</span>
                     <span className="text-lg font-bold" style={{ color: '#00D65E' }}>
                       ₹{Number(amount).toLocaleString('en-IN')}
                     </span>
                   </div>
+                  {subCat && (
+                    <div className="flex justify-between items-center"
+                      style={{ borderTop: '1px solid hsl(222 35% 20%)', paddingTop: 10 }}>
+                      <span className="text-xs text-muted-foreground">Note</span>
+                      <span className="text-xs text-foreground">{subCat}</span>
+                    </div>
+                  )}
                 </div>
 
-                <p className="text-center text-[11px] text-muted-foreground leading-relaxed">
+                <p className="text-center text-[11px] text-muted-foreground">
                   After paying in your UPI app, come back here and confirm.
                 </p>
               </>
             ) : (
-              /* ── Android: deep link was opened ── */
               <>
                 <div className="flex flex-col items-center text-center pt-3 pb-1 gap-3">
                   <div className="w-16 h-16 rounded-full flex items-center justify-center"
@@ -523,7 +530,7 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
                     <span className="text-xs text-muted-foreground">Paying to</span>
                     <div className="text-right">
                       {payeeName && <p className="text-xs font-bold text-foreground">{payeeName}</p>}
-                      <p className="text-[11px] text-muted-foreground">{payeeUpi}</p>
+                      <p className="text-[11px] text-muted-foreground">{upiId}</p>
                     </div>
                   </div>
                   <div className="flex justify-between items-center"
@@ -536,7 +543,9 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
                   <div className="flex justify-between items-center"
                     style={{ borderTop: '1px solid hsl(222 35% 20%)', paddingTop: 10 }}>
                     <span className="text-xs text-muted-foreground">Category</span>
-                    <span className="text-xs font-semibold text-foreground">{cat}</span>
+                    <span className="text-xs font-semibold text-foreground">
+                      {cat}{subCat ? ` • ${subCat}` : ''}
+                    </span>
                   </div>
                 </div>
 
@@ -547,9 +556,7 @@ export default function ScanPayModal({ open, onClose, onSuccess }: ScanPayModalP
                     <p className="text-[11px]" style={{ color: '#FF4444' }}>
                       App didn't open.{' '}
                       <button onClick={() => { setAppOpenError(false); openUpiLink(fallbackLink); }}
-                        className="underline underline-offset-2 font-semibold">
-                        Try generic UPI
-                      </button>
+                        className="underline font-semibold">Try generic UPI</button>
                     </p>
                   </div>
                 ) : (

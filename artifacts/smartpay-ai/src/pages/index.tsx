@@ -1,9 +1,8 @@
 import { useState, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ScanLine, Download } from 'lucide-react';
+import { Download } from 'lucide-react';
 import { Link } from 'wouter';
 import PayButton from '@/components/PayButton';
-import PaymentModal from '@/components/PaymentModal';
 import ScanPayModal from '@/components/ScanPayModal';
 import BudgetRing from '@/components/BudgetRing';
 import SmartBanner from '@/components/SmartBanner';
@@ -12,7 +11,6 @@ import BottomNav from '@/components/BottomNav';
 import { getSettings, getMonthlySpend, getMonthTransactions } from '@/lib/storage';
 
 export default function Index() {
-  const [payOpen, setPayOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [isReady, setIsReady] = useState(false);
@@ -99,23 +97,14 @@ export default function Index() {
         <BudgetRing spent={spent} budget={settings.monthlyBudget} />
       </motion.div>
 
-      {/* Pay Buttons */}
+      {/* Pay Button */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
         className="flex flex-col items-center gap-4 py-2"
       >
-        <PayButton onClick={() => setPayOpen(true)} />
-
-        <button
-          onClick={() => setScanOpen(true)}
-          className="flex items-center gap-2 px-6 py-3 rounded-xl text-foreground font-medium text-sm transition-all border active:scale-95"
-          style={{ background: 'hsl(222 40% 16%)', borderColor: 'hsl(222 35% 22%)' }}
-        >
-          <ScanLine className="w-4 h-4" style={{ color: '#00D65E' }} />
-          Scan &amp; Pay
-        </button>
+        <PayButton onClick={() => setScanOpen(true)} />
       </motion.div>
 
       {/* Payment count stat */}
@@ -186,7 +175,6 @@ export default function Index() {
         )}
       </motion.div>
 
-      <PaymentModal open={payOpen} onClose={() => setPayOpen(false)} onSuccess={forceRefresh} />
       <ScanPayModal open={scanOpen} onClose={() => setScanOpen(false)} onSuccess={forceRefresh} />
       <BottomNav />
     </div>
