@@ -7,11 +7,11 @@ import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 const rawPort = process.env.PORT;
 const isBuild = process.env.NODE_ENV === 'production' || process.argv.includes('build');
 
-if (!rawPort && !isBuild) {
+/*if (!rawPort && !isBuild) {
   throw new Error(
     "PORT environment variable is required but was not provided.",
   );
-}
+}*/
 
 const port = Number(rawPort || 3000);
 
