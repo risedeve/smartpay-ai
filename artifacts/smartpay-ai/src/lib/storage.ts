@@ -40,17 +40,19 @@ const DEFAULT_SETTINGS: Settings = {
   userName: '',
 };
 
+/**
+ * Internal helper to format 10-digit numbers into standard VPAs
+ */
 function normalisePayee(payee: string): string {
   const v = payee.trim();
-  // 10-digit mobile: use @upi handle (NPCI-registered, works across apps)
-  // Do NOT prepend 91 — that produces an invalid VPA
   if (/^\d{10}$/.test(v)) return `${v}@upi`;
   return v;
 }
 
 /**
- * Build an app-specific UPI deep link.
- * Falls back to the standard upi://pay scheme if app is missing/unrecognised.
+ * Build a policy-compliant UPI link.
+ * We use the universal 'upi://' scheme because app-specific schemes (tez://, etc.)
+ * often trigger "Security Policy" errors when launched from a browser.
  */
 export function buildPaymentLink(
   app: PayApp | '',
@@ -60,22 +62,27 @@ export function buildPaymentLink(
   pn = '',
 ): string {
   const pa = normalisePayee(payee);
-  const appSchemes: Record<string, string> = {
-    gpay:    'tez://upi/pay',
-    phonepe: 'phonepe://pay',
-    paytm:   'paytmmp://pay',
-    upi:     'upi://pay',
-  };
-  const scheme = (app && appSchemes[app]) ? appSchemes[app] : 'upi://pay';
-  const p = new URLSearchParams({ pa, am: amount.toFixed(2), cu: 'INR' });
-  if (pn) p.set('pn', pn);
-  if (tn) p.set('tn', tn);
+  
+  // Use generic 'upi://pay'. It is the most compliant for web-to-app intents.
+  const scheme = 'upi://pay';
+
+  const p = new URLSearchParams();
+  p.set('pa', pa);                        // Payee VPA
+  p.set('pn', pn || 'Merchant');          // Payee Name (Required for policy compliance)
+  p.set('am', amount.toFixed(2));         // Amount (Must be 2 decimals)
+  p.set('cu', 'INR');                     // Currency
+  
+  // Clean the note (alphanumeric only, max 20 chars)
+  if (tn) {
+    const cleanNote = tn.replace(/[^a-zA-Z0-9 ]/g, '').substring(0, 20);
+    p.set('tn', cleanNote);
+  }
+
   return `${scheme}?${p.toString()}`;
 }
 
 /**
  * Always-reliable fallback using the standard UPI intent scheme.
- * Android will show an app-chooser; works even if the preferred app is not installed.
  */
 export function buildFallbackUpiLink(
   payee: string,
@@ -83,11 +90,7 @@ export function buildFallbackUpiLink(
   tn = '',
   pn = '',
 ): string {
-  const pa = normalisePayee(payee);
-  const p = new URLSearchParams({ pa, am: amount.toFixed(2), cu: 'INR' });
-  if (pn) p.set('pn', pn);
-  if (tn) p.set('tn', tn);
-  return `upi://pay?${p.toString()}`;
+  return buildPaymentLink('', payee, amount, tn, pn);
 }
 
 export function buildAppOpenLink(app: PayApp | ''): string {
